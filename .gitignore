@@ -1,3 +1,14 @@
+# Master gitignore file
+
+# Eclipse settings
+/.cproject
+/.project
+/.settings/
+
+# Targets
+/yash
+/yashd
+
 # Prerequisites
 *.d
 
