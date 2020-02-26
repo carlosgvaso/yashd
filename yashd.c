@@ -10,19 +10,56 @@
 
 
 /**
+ * @brief Handler for SIGPIPE
+ *
+ * If we are waiting reading from a pipe and
+ * the interlocutor dies abruptly (say because
+ * of ^C or kill -9), then we receive a SIGPIPE
+ * signal. Here we handle that.
+ *
+ * Based on an example provided in Unix Systems Programming by Ramesh
+ * Yerraballi.
+ *
+ * @param	sig	Signal
+ */
+void sig_pipe(int sig) {
+	perror("Broken pipe signal");
+}
+
+
+/**
+ * @brief Handler for SIGCHLD signal
+ *
+ * Based on an example provided in Unix Systems Programming by Ramesh
+ * Yerraballi.
+ *
+ * @param	sig	Signal
+ */
+void sig_chld(int sig) {
+	int status;
+	fprintf(stderr, "Child terminated\n");
+	wait(&status); // So no zombies
+}
+
+
+/**
  * @brief Daemon initialization tasks
+ *
+ * Based on an example provided in Unix Systems Programming by Ramesh
+ * Yerraballi.
  */
 void daemonize() {
 	pid_t pid;
 	int k, fd;
 	char buff[256];
+	static FILE *log;
 
 	// Make process a background process with the init process as a parent
 	if ( ( pid = fork() ) < 0 ) {
 		perror("daemon_init: cannot fork");
-		_exit(0);
+		exit(0);
 	} else if (pid > 0) { // Parent
-		_exit(0);
+		exit(0);
 	}
 	// Child
 
@@ -34,7 +71,7 @@ void daemonize() {
 	// Reset standard files to /dev/null
 	if ( (fd = open("/dev/null", O_RDWR)) < 0) {
 		perror("Open");
-		_exit(0);
+		exit(0);
 	}
 	dup2(fd, STDIN_FILENO);
 	dup2(fd, STDOUT_FILENO);
@@ -53,10 +90,9 @@ void daemonize() {
 	 * Make sure only one copy of the server is running.
 	 *
 	 * Here we open a predetermined file and we lock it. We keep the file locked
-	 * while the daemon is alive, so that any other instance run can check if
-	 * there is already one running.
+	 * while the daemon is alive, so when any other instance runs, it can check
+	 * if there is already one running.
 	 */
-	// TODO: Do this first?
 	if ( ( k = open(DAEMON_PID_PATH, O_RDWR | O_CREAT, 0666) ) < 0 ) {
 		exit(1);
 	}
@@ -65,7 +101,7 @@ void daemonize() {
 	}
 
 	// Save server’s pid without closing file (so lock remains)
-	sprintf(buff, "%6d", pid);
+	sprintf(buff, "%6d", getpid());
 	write(k, buff, strlen(buff));
 
 	// Set signal handlers (if necessary)
@@ -74,30 +110,24 @@ void daemonize() {
 	signal(SIGTTOU, SIG_IGN);
 	signal(SIGINT, SIG_IGN);
 	signal(SIGTSTP, SIG_IGN);
-	//signal(SIGCHLD, SIG_IGN);
 	 */
 
-	/*
-	// From daemon example
 	// This is only relevant if the daemon were to create child processes
 	if ( signal(SIGCHLD, sig_chld) < 0 ) {
-	perror("Signal SIGCHLD");
-	exit(1);
+		perror("Signal SIGCHLD");
+		exit(1);
 	}
 	// Again this is only relevant if the daemon creates pipes
 	if ( signal(SIGPIPE, sig_pipe) < 0 ) {
-	perror("Signal SIGPIPE");
-	exit(1);
+		perror("Signal SIGPIPE");
+		exit(1);
 	}
-	*/
 
-	// Use syslog to handle error messages
-	/*
-	log = fopen(u_log_path, "aw"); // attach stderr to u_log_path
+	// Send error messages to log
+	log = fopen(DAEMON_LOG_PATH, "aw"); // attach stderr to log file
 	fd = fileno(log); // obtain file descriptor of the log
 	dup2(fd, STDERR_FILENO);
 	close (fd);
-	*/
 }
 
 
@@ -951,6 +981,7 @@ void killAllJobs() {
  * @return	Errorcode
  */
 int main(int argc, char** argv) {
+	/*
 	const char USAGE[MAX_ERROR_LEN] = "\nUsage:\n"
 			"./yashd [options]\n"
 			"\n"
@@ -978,9 +1009,12 @@ int main(int argc, char** argv) {
 			}
 		}
 	}
+	*/
 
-	// Initialize the shell
+	// Initialize the daemon
 	daemonize();
+
+	// Old yash code
 
 	/*
 	 * Use `readline()` to control when to exit from the shell. Typing
@@ -991,6 +1025,7 @@ int main(int argc, char** argv) {
 	 * empty at that point, then (char *)NULL is returned. Otherwise, the line
 	 * is ended just as if a newline had been typed."
 	 */
+	/*
 	while ((in_str = readline("# "))) {
 		// Check input to ignore and show the prompt again
 		if (verbose) {
@@ -1025,6 +1060,14 @@ int main(int argc, char** argv) {
 	killAllJobs();
 
 	// TODO: Ensure all child processes are dead on exit
+	*/
+
+	// For now do nothing
+	while(true) {
+		// Sleep
+		sleep(10);
+		perror("Run yashd main loop\n\0");
+	}
 
 	return (EXIT_OK);
 }

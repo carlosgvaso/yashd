@@ -9,20 +9,25 @@
 #ifndef YASHD_H
 #define YASHD_H
 
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <sys/file.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
-#include <errno.h>
 #include <readline/readline.h>
 #include <readline/history.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <signal.h>
 
 #define MAX_CMD_LEN 2000	//! Max command length as per requirements
 #define MAX_TOKEN_LEN 30	//! Max token length as per requirements
@@ -50,7 +55,8 @@
 #define EMPTY_ARRAY -1
 
 #define DAEMON_DIR "/tmp/"					//! Daemon safe directory
-#define DAEMON_PID_PATH "/tmp/yashd.pid"	//! Daemon PID file
+#define DAEMON_LOG_PATH "/tmp/yashd.log"	//! Daemon log path
+#define DAEMON_PID_PATH "/tmp/yashd.pid"	//! Daemon PID file path
 #define DAEMON_UMASK 0						//! Daemon umask
 
 #define CMD_BG "bg\0"		//! Shell command bg, @sa bg()
@@ -119,6 +125,8 @@ static int last_job = EMPTY_ARRAY;				//! Last job index in job_arr
 
 
 // Functions
+void sig_pipe(int n);
+void sig_chld(int n);
 void daemonize();
 bool ignoreInput(char* input_str);
 void removeJob(int job_idx);
