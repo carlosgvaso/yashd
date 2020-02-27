@@ -17,7 +17,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/un.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <signal.h>
 #include <errno.h>
 #include <stdio.h>
@@ -26,9 +28,11 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
+#include <ctype.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
+#define PATHMAX 255			//! Max length of a path
 #define MAX_CMD_LEN 2000	//! Max command length as per requirements
 #define MAX_TOKEN_LEN 30	//! Max token length as per requirements
 #define MAX_ERROR_LEN 256	//! Max error message length
@@ -69,8 +73,9 @@
 
 #define EXIT_OK 0		//! No error
 #define EXIT_ERR 1		//! Unknown error
-#define EXIT_ERR_ARG 2	//! Wrong argument provided
-#define EXIT_ERR_CMD 3	//! Command syntax error
+#define EXIT_DAEMON 2	//! Daemon process error
+#define EXIT_ERR_ARG 3	//! Wrong argument provided
+#define EXIT_ERR_CMD 4	//! Command syntax error
 
 
 /**
@@ -119,6 +124,11 @@ struct Job {
 
 
 // Globals
+extern int errno;
+
+static char log_path[PATHMAX+1];
+static char pid_path[PATHMAX+1];
+
 static uint8_t verbose;							//! Verbose output flag
 static struct Job job_arr[MAX_CONCURRENT_JOBS];	//! Current jobs array
 static int last_job = EMPTY_ARRAY;				//! Last job index in job_arr
@@ -127,7 +137,7 @@ static int last_job = EMPTY_ARRAY;				//! Last job index in job_arr
 // Functions
 void sig_pipe(int n);
 void sig_chld(int n);
-void daemonize();
+void daemon_init(const char *const path, uint mask);
 bool ignoreInput(char* input_str);
 void removeJob(int job_idx);
 void printJob(int job_idx);

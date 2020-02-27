@@ -10,6 +10,21 @@
 
 
 /**
+ * @brief Safely terminate the daemon process
+ *
+ * @param[in]	errcode	Error code
+ */
+void safe_exit(int errcode) {
+	// TODO: Implement safety features
+	//			- Close opened files (?)
+	//			- Free memory (?)
+
+	perror("yashd: Exiting daemon...");
+	exit(errcode);
+}
+
+
+/**
  * @brief Handler for SIGPIPE
  *
  * If we are waiting reading from a pipe and
@@ -43,68 +58,64 @@ void sig_chld(int sig) {
 
 
 /**
- * @brief Daemon initialization tasks
+ * @brief Initializes the current program as a daemon, by changing working
+ *  directory, umask, and eliminating control terminal, setting signal handlers,
+ *  saving pid, making sure that only one daemon is running.
  *
- * Based on an example provided in Unix Systems Programming by Ramesh
- * Yerraballi.
+ * Modified from Ramesh Yerraballi.
+ *
+ * @param[in] path is where the daemon eventually operates
+ * @param[in] mask is the umask typically set to 0
  */
-void daemonize() {
+void daemon_init(const char *const path, uint mask) {
 	pid_t pid;
-	int k, fd;
 	char buff[256];
-	static FILE *log;
+	static FILE *log; // for the log
+	int fd;
+	int k;
 
-	// Make process a background process with the init process as a parent
-	if ( ( pid = fork() ) < 0 ) {
-		perror("daemon_init: cannot fork");
-		exit(0);
-	} else if (pid > 0) { // Parent
-		exit(0);
+	// Put server in background (with init/systemd as parent)
+	if ((pid = fork()) < 0) {
+		perror("daemon_init: Cannot fork process");
+		safe_exit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+	} else if (pid > 0) {	// Parent
+		// No need for safe exit because parent is done
+		exit(EXIT_OK);
 	}
+
 	// Child
 
-	// Close all open file descriptors
-	for (k = getdtablesize()-1; k>0; k--) {
+	// Close all file descriptors that are open
+	for (k = getdtablesize() - 1; k > 0; k--)
 		close(k);
+
+	// Redirect stdin and stdout to /dev/null
+	if ((fd = open("/dev/null", O_RDWR)) < 0) {
+		perror("daemon_init: Error: Failed to open /dev/null");
+		safe_exit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+	}
+	dup2(fd, STDIN_FILENO); /* detach stdin */
+	dup2(fd, STDOUT_FILENO); /* detach stdout */
+	close(fd);
+	// From this point on printf and scanf have no effect
+
+	// Redirect stderr to u_log_path
+	log = fopen(log_path, "aw");	// attach stderr to log file
+	fd = fileno(log);	// Obtain file descriptor of the log
+	dup2(fd, STDERR_FILENO);
+	close(fd);
+	// From this point on printing to stderr will go to log file
+
+	// Set signal handlers
+	if (signal(SIGCHLD, sig_chld) < 0) {
+		perror("daemon_init: Error: Could not set signal handler for SIGCHLD");
+		safe_exit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+	}
+	if (signal(SIGPIPE, sig_pipe) < 0) {
+		perror("daemon_init: Error: Could not set signal handler for SIGPIPE");
+		safe_exit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
 
-	// Reset standard files to /dev/null
-	if ( (fd = open("/dev/null", O_RDWR)) < 0) {
-		perror("Open");
-		exit(0);
-	}
-	dup2(fd, STDIN_FILENO);
-	dup2(fd, STDOUT_FILENO);
-	close (fd);
-
-	// Move to safe directory
-	chdir(DAEMON_DIR);
-
-	// Set the umask
-	umask(DAEMON_UMASK);
-
-	// Detach from controlling terminal
-	setsid();
-
-	/*
-	 * Make sure only one copy of the server is running.
-	 *
-	 * Here we open a predetermined file and we lock it. We keep the file locked
-	 * while the daemon is alive, so when any other instance runs, it can check
-	 * if there is already one running.
-	 */
-	if ( ( k = open(DAEMON_PID_PATH, O_RDWR | O_CREAT, 0666) ) < 0 ) {
-		exit(1);
-	}
-	if ( lockf(k, F_TLOCK, 0) != 0) {
-		exit(0);
-	}
-
-	// Save server’s pid without closing file (so lock remains)
-	sprintf(buff, "%6d", getpid());
-	write(k, buff, strlen(buff));
-
-	// Set signal handlers (if necessary)
 	/*
 	// From old yash code
 	signal(SIGTTOU, SIG_IGN);
@@ -112,22 +123,35 @@ void daemonize() {
 	signal(SIGTSTP, SIG_IGN);
 	 */
 
-	// This is only relevant if the daemon were to create child processes
-	if ( signal(SIGCHLD, sig_chld) < 0 ) {
-		perror("Signal SIGCHLD");
-		exit(1);
+	// Change directory to specified safe directory
+	chdir(path);
+
+	// Set umask to mask (usually 0)
+	umask(mask);
+
+	// Detach controlling terminal by becoming session leader
+	setsid();
+
+	// Put self in a new process group
+	pid = getpid();
+	setpgrp();	// GPI: modified for linux
+
+	/* Make sure only one server is running */
+	if ((k = open(pid_path, O_RDWR | O_CREAT, 0666)) < 0) {
+		perror("daemon_init: Error: Could not open PID file");
+		safe_exit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
-	// Again this is only relevant if the daemon creates pipes
-	if ( signal(SIGPIPE, sig_pipe) < 0 ) {
-		perror("Signal SIGPIPE");
-		exit(1);
+	if (lockf(k, F_TLOCK, 0) != 0) {
+		perror("daemon_init: Warning: Could not lock PID file because other "
+				"daemon instance is running");
+		safe_exit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
 
-	// Send error messages to log
-	log = fopen(DAEMON_LOG_PATH, "aw"); // attach stderr to log file
-	fd = fileno(log); // obtain file descriptor of the log
-	dup2(fd, STDERR_FILENO);
-	close (fd);
+	/* Save server's pid without closing file (so lock remains)*/
+	sprintf(buff, "%6d", pid);
+	write(k, buff, strlen(buff));
+
+	return;
 }
 
 
@@ -1012,7 +1036,9 @@ int main(int argc, char** argv) {
 	*/
 
 	// Initialize the daemon
-	daemonize();
+	strcpy(log_path, DAEMON_LOG_PATH);
+	strcpy(pid_path, DAEMON_PID_PATH);
+	daemon_init(DAEMON_DIR, DAEMON_UMASK);
 
 	// Old yash code
 
@@ -1066,7 +1092,7 @@ int main(int argc, char** argv) {
 	while(true) {
 		// Sleep
 		sleep(10);
-		perror("Run yashd main loop\n\0");
+		perror("Run yashd main loop");
 	}
 
 	return (EXIT_OK);
