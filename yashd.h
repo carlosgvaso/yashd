@@ -89,10 +89,18 @@
  *   - verbose: enable debugging log output
  *   - port: port of the TCP server
  */
-typedef struct Args {
-	bool verbose;
-	int port;
-} Arg;
+typedef struct _cmd_args_t {
+	bool verbose;	// Logger verbose output
+	int port;		// Server port
+} cmd_args_t;
+
+
+/**
+ * @brief Struct to organize all the necessary thread arguments
+ */
+typedef struct _thread_args_t {
+	cmd_args_t cmd_args;	// Command line arguments
+} thread_args_t;
 
 
 /**
@@ -140,25 +148,7 @@ typedef struct Jobs {
 } Job;
 
 
-// Globals
-static Arg args;
-
-extern int errno;
-
-static char log_path[PATHMAX+1];
-static char pid_path[PATHMAX+1];
-
-static uint8_t verbose;						//! Verbose output flag
-static Job job_arr[MAX_CONCURRENT_JOBS];	//! Current jobs array
-static int last_job = EMPTY_ARRAY;			//! Last job index in job_arr
-
-
 // Functions
-bool isNumber(char number[]);
-Arg parseArgs(int argc, char** argv);
-void sig_pipe(int n);
-void sig_chld(int n);
-void daemon_init(const char *const path, uint mask);
 bool ignoreInput(char* input_str);
 void removeJob(int job_idx);
 void printJob(int job_idx);
@@ -175,6 +165,12 @@ void runJob(Job jobs_arr[], int* last_job);
 void handleNewJob(char* input);
 void maintainJobsTable();
 void killAllJobs();
+void *run_shell(void *arg);
+bool isNumber(char number[]);
+cmd_args_t parseArgs(int argc, char** argv);
+void sigPipe(int n);
+void sigChld(int n);
+void daemonInit(const char *const path, uint mask);
 int main(int argc, char** argv);
 
 #endif
