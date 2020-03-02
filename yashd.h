@@ -58,10 +58,14 @@
 #define EMPTY_STR "\0"
 #define EMPTY_ARRAY -1
 
+#define DAEMON_PORT 3826					//! Default daemon TCP server port
 #define DAEMON_DIR "/tmp/"					//! Daemon safe directory
 #define DAEMON_LOG_PATH "/tmp/yashd.log"	//! Daemon log path
 #define DAEMON_PID_PATH "/tmp/yashd.pid"	//! Daemon PID file path
 #define DAEMON_UMASK 0						//! Daemon umask
+
+#define TCP_PORT_LOWER_LIM 1024		//! Lowest TCP port allowed
+#define TCP_PORT_HIGHER_LIM 65535	//! Highest TCP port allowed
 
 #define CMD_BG "bg\0"		//! Shell command bg, @sa bg()
 #define CMD_FG "fg\0"		//! Shell command fg, @sa fg()
@@ -76,6 +80,19 @@
 #define EXIT_DAEMON 2	//! Daemon process error
 #define EXIT_ERR_ARG 3	//! Wrong argument provided
 #define EXIT_ERR_CMD 4	//! Command syntax error
+
+
+/**
+ * @brief Struct to organize all the command line arguments.
+ *
+ * Arguments:
+ *   - verbose: enable debugging log output
+ *   - port: port of the TCP server
+ */
+typedef struct Args {
+	bool verbose;
+	int port;
+} Arg;
 
 
 /**
@@ -102,7 +119,7 @@
  * must be set to the error message string. Else, `err_msg` must be set to
  * `"\0"`.
  */
-struct Job {
+typedef struct Jobs {
 	char cmd_str[MAX_CMD_LEN+1];		// Input command as a string
 	char* cmd_tok[MAX_TOKEN_NUM];		// Tokenized input command
 	uint32_t cmd_tok_len;				// Number of tokens in command
@@ -120,21 +137,25 @@ struct Job {
 	uint8_t jobno;						// Job number
 	char status[MAX_STATUS_LEN];		// Status of the process group
 	char err_msg[MAX_ERROR_LEN];		// Error message
-};
+} Job;
 
 
 // Globals
+static Arg args;
+
 extern int errno;
 
 static char log_path[PATHMAX+1];
 static char pid_path[PATHMAX+1];
 
-static uint8_t verbose;							//! Verbose output flag
-static struct Job job_arr[MAX_CONCURRENT_JOBS];	//! Current jobs array
-static int last_job = EMPTY_ARRAY;				//! Last job index in job_arr
+static uint8_t verbose;						//! Verbose output flag
+static Job job_arr[MAX_CONCURRENT_JOBS];	//! Current jobs array
+static int last_job = EMPTY_ARRAY;			//! Last job index in job_arr
 
 
 // Functions
+bool isNumber(char number[]);
+Arg parseArgs(int argc, char** argv);
 void sig_pipe(int n);
 void sig_chld(int n);
 void daemon_init(const char *const path, uint mask);
@@ -145,12 +166,12 @@ void bgExec();
 void fgExec();
 void jobsExec();
 bool runShellComd(char* input);
-void tokenizeString(struct Job* cmd_tok);
-void parseJob(char* cmd_str, struct Job jobs_arr[], int* last_job);
-void redirectSimple(struct Job* cmd);
-void redirectPipe(struct Job* cmd);
-void waitForChildren(struct Job* cmd);
-void runJob(struct Job jobs_arr[], int* last_job);
+void tokenizeString(Job* cmd_tok);
+void parseJob(char* cmd_str, Job jobs_arr[], int* last_job);
+void redirectSimple(Job* cmd);
+void redirectPipe(Job* cmd);
+void waitForChildren(Job* cmd);
+void runJob(Job jobs_arr[], int* last_job);
 void handleNewJob(char* input);
 void maintainJobsTable();
 void killAllJobs();

@@ -10,6 +10,103 @@
 
 
 /**
+ * @brief Check if a string contains only number characters
+ *
+ * @param	number	String to check
+ * @return	True if the string contains only numbers, false otherwise
+ */
+bool isNumber(char number[]) {
+	int i = 0;
+
+	// Checking for negative numbers
+	if (number[0] == '-')
+		i = 1;
+	for (; number[i] != 0; i++) {
+		//if (number[i] > '9' || number[i] < '0')
+		if (!isdigit(number[i]))
+			return false;
+	}
+	return true;
+}
+
+
+/**
+ * @brief Parse the command line arguments
+ *
+ * @param	argc	Number of command line arguments
+ * @param	argv	Array of command line arguments
+ * @return	Struct with the parsed arguments
+ */
+Arg parseArgs(int argc, char** argv) {
+	const char USAGE[MAX_ERROR_LEN] = "\nUsage:\n"
+				"./yashd [options]\n"
+				"\n"
+				"Options:\n"
+				"    -h, --help              Print help and exit\n"
+				"    -p PORT, --port PORT    Server port [1024-65535]\n"
+				"    -v, --verbose           Verbose logger output\n";
+		const char ARG_ERROR[MAX_ERROR_LEN] = "-yashd: unknown argument: %s\n";
+		const char H_FLAG_SHORT[3] = "-h\0";
+		const char H_FLAG_LONG[10] = "--help\0";
+		const char P_FLAG_SHORT[3] = "-p\0";
+		const char P_FLAG_LONG[10] = "--port\0";
+		const char P_INFO[MAX_ERROR_LEN] = "-yashd: using port: %d\n";
+		const char P_ERROR1[MAX_ERROR_LEN] = "-yashd: missing port number\n";
+		const char P_ERROR2[MAX_ERROR_LEN] = "-yashd: port must be an integer "
+				"between %d and %d\n";
+		const char V_FLAG_SHORT[3] = "-v\0";
+		const char V_FLAG_LONG[10] = "--verbose\0";
+		const char V_INFO[MAX_ERROR_LEN] = "-yashd: verbose output enabled\n";
+		Arg args = {false, DAEMON_PORT};
+
+	// Loop over the arguments, skipping the command token
+	for (int i=1; i<argc; i++) {
+		if (!strcmp(H_FLAG_SHORT, argv[i])
+				|| !strcmp(H_FLAG_LONG, argv[i])) {
+			printf(USAGE);
+			exit(EXIT_OK);
+		} else if (!strcmp(V_FLAG_SHORT, argv[i])
+				|| !strcmp(V_FLAG_LONG, argv[i])) {
+			args.verbose = true;
+			printf(V_INFO);
+		} else if (!strcmp(P_FLAG_SHORT, argv[i])
+				|| !strcmp(P_FLAG_LONG, argv[i])) {
+			// Port argument detected, next argument should be the port number
+			if (i+1 >= argc) {
+				printf(P_ERROR1);
+				printf(USAGE);
+				exit(EXIT_ERR_ARG);
+			} else if (!isNumber(argv[i+1])) {
+				printf(P_ERROR2, TCP_PORT_LOWER_LIM, TCP_PORT_HIGHER_LIM);
+				printf(USAGE);
+				exit(EXIT_ERR_ARG);
+			}
+
+			// Save port number
+			i++;
+			args.port = atoi(argv[i]);
+
+			// Check if port is in a valid range
+			if (args.port < TCP_PORT_LOWER_LIM ||
+					args.port > TCP_PORT_HIGHER_LIM) {
+				printf(P_ERROR2, TCP_PORT_LOWER_LIM, TCP_PORT_HIGHER_LIM);
+				printf(USAGE);
+				exit(EXIT_ERR_ARG);
+			}
+
+			printf(P_INFO, args.port);
+		} else {
+			printf(ARG_ERROR, argv[i]);
+			printf(USAGE);
+			exit(EXIT_ERR_ARG);
+		}
+	}
+
+	return args;
+}
+
+
+/**
  * @brief Safely terminate the daemon process
  *
  * @param[in]	errcode	Error code
@@ -319,7 +416,7 @@ bool runShellCmd(char* input) {
  *
  * @sa strtok(), Cmd
  */
-void tokenizeString(struct Job* cmd) {
+void tokenizeString(Job* cmd) {
 	const char CMD_TOKEN_DELIM = ' ';	// From requirements
 	size_t len = 0;
 
@@ -356,7 +453,7 @@ void tokenizeString(struct Job* cmd) {
  *
  * @sa	Cmd
  */
-void parseJob(char* cmd_str, struct Job job_arr[], int* last_job) {
+void parseJob(char* cmd_str, Job job_arr[], int* last_job) {
 	const char I_REDIR_OPT[2] = "<\0";
 	const char O_REDIR_OPT[2] = ">\0";
 	const char E_REDIR_OPT[3] = "2>\0";
@@ -507,7 +604,7 @@ void parseJob(char* cmd_str, struct Job job_arr[], int* last_job) {
  *
  * @param	cmd	Command to set the redirection
  */
-void redirectSimple(struct Job* cmd) {
+void redirectSimple(Job* cmd) {
 	const char REDIR_ERR_1[MAX_ERROR_LEN] = "open errno ";
 	const char REDIR_ERR_2[MAX_ERROR_LEN] = ": could not open file: ";
 	extern errno;
@@ -577,7 +674,7 @@ void redirectSimple(struct Job* cmd) {
  *
  * @param	cmd	Command to set the redirection
  */
-void redirectPipe(struct Job* cmd) {
+void redirectPipe(Job* cmd) {
 	const char REDIR_ERR_1[MAX_ERROR_LEN] = "open errno ";
 	const char REDIR_ERR_2[MAX_ERROR_LEN] = ": could not open file: ";
 	extern errno;
@@ -653,7 +750,7 @@ void redirectPipe(struct Job* cmd) {
  *
  * @param cmd	Parsed command
  */
-void waitForChildren(struct Job* cmd) {
+void waitForChildren(Job* cmd) {
 	const char SIG_ERR_1[MAX_ERROR_LEN] = "signal errno ";
 	const char SIG_ERR_2[MAX_ERROR_LEN] = ": waitpid error";
 	extern errno;
@@ -732,7 +829,7 @@ void waitForChildren(struct Job* cmd) {
  * @param	job_arr	Jobs list of parsed commands
  * @param	last_job	Last job added to the job_arr
  */
-void runJob(struct Job job_arr[], int* last_job) {
+void runJob(Job job_arr[], int* last_job) {
 	const char PIPE_ERR_1[MAX_ERROR_LEN] = "pipe errno ";
 	const char PIPE_ERR_2[MAX_ERROR_LEN] = ": failed to make pipe";
 	extern errno;
@@ -871,24 +968,24 @@ void runJob(struct Job job_arr[], int* last_job) {
  */
 void handleNewJob(char* input) {
 	// Initialize a new Job struct
-	struct Job job = {
-			EMPTY_STR,		// cmd_str
-			{ EMPTY_STR },	// cmd_tok
-			0,				// cmd_tok_size
-			{ EMPTY_STR },	// cmd1
-			EMPTY_STR,		// in1
-			EMPTY_STR,		// out1
-			EMPTY_STR,		// err1
-			{ EMPTY_STR },	// cmd2
-			EMPTY_STR,		// in2
-			EMPTY_STR,		// out2
-			EMPTY_STR,		// err2
-			false,			// pipe
-			false,			// bg
-			EMPTY_ARRAY,	// gpid
-			EMPTY_ARRAY,	// jobno
-			EMPTY_STR,		// status
-			EMPTY_STR		// err_msg
+	Job job = {
+		EMPTY_STR,		// cmd_str
+		{ EMPTY_STR },	// cmd_tok
+		0,				// cmd_tok_size
+		{ EMPTY_STR },	// cmd1
+		EMPTY_STR,		// in1
+		EMPTY_STR,		// out1
+		EMPTY_STR,		// err1
+		{ EMPTY_STR },	// cmd2
+		EMPTY_STR,		// in2
+		EMPTY_STR,		// out2
+		EMPTY_STR,		// err2
+		false,			// pipe
+		false,			// bg
+		EMPTY_ARRAY,	// gpid
+		EMPTY_ARRAY,	// jobno
+		EMPTY_STR,		// status
+		EMPTY_STR		// err_msg
 	};
 
 	// Add command to the jobs array
@@ -1006,34 +1103,10 @@ void killAllJobs() {
  */
 int main(int argc, char** argv) {
 	/*
-	const char USAGE[MAX_ERROR_LEN] = "\nUsage:\n"
-			"./yashd [options]\n"
-			"\n"
-			"Options:\n"
-			"\t-v, --verbose\tVerbose output from shell\n";
-	const char ARG_ERROR[MAX_ERROR_LEN] = "-yashd: unknown argument: ";
-	const char V_FLAG_SHORT[3] = "-v\0";
-	const char V_FLAG_LONG[10] = "--verbose\0";
-	const char V_INFO[MAX_ERROR_LEN] = "-yashd: verbose output set\n";
 	char* in_str;
-
-	// Read command line arguments
-	verbose = false;
-	if (argc > 1) {
-		for (int i=1; i<argc; i++){
-			if (!strcmp(V_FLAG_SHORT, argv[i])
-					|| !strcmp(V_FLAG_LONG, argv[i])) {
-				verbose = true;
-				printf(V_INFO);
-			} else {
-				printf(ARG_ERROR);
-				printf("%s\n", argv[i]);
-				printf(USAGE);
-				return (EXIT_ERR_ARG);
-			}
-		}
-	}
-	*/
+	 */
+	// Process command line arguments
+	args = parseArgs(argc, argv);
 
 	// Initialize the daemon
 	strcpy(log_path, DAEMON_LOG_PATH);
