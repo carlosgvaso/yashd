@@ -262,6 +262,28 @@ void daemonInit(const char *const path, uint mask) {
 
 
 /**
+ * @brief Generate a string with the current timestamp in syslog format
+ *
+ * @param	buff	Buffer to hold the timestamp
+ * @param	size	Buffer size
+ * @return	String with current timestamp in syslog format
+ */
+char *timeStr(char *buff, int size) {
+	struct tm sTm;
+
+	time_t now = time(NULL);
+	gmtime_r(&now, &sTm);
+
+	if (!strftime(buff, size, "%b %e %H:%M:%S", &sTm)) {
+		perror("Could not format timestamp");
+		strcpy(buff, "Jan  1 00:00:00\0");
+	}
+
+	return buff;
+}
+
+
+/**
  * @brief Point of entry.
  *
  * @param argc	Number of command line arguments
@@ -269,9 +291,8 @@ void daemonInit(const char *const path, uint mask) {
  * @return	Errorcode
  */
 int main(int argc, char** argv) {
-	/*
-	char* in_str;
-	 */
+	char buff[BUFF_SIZE_TIMESTAMP];
+
 	// Process command line arguments
 	args = parseArgs(argc, argv);
 
@@ -280,60 +301,20 @@ int main(int argc, char** argv) {
 	strcpy(pid_path, DAEMON_PID_PATH);
 	daemonInit(DAEMON_DIR, DAEMON_UMASK);
 
-	// Old yash code
+	// Set up server socket
+	//createSocket();
 
-	/*
-	 * Use `readline()` to control when to exit from the shell. Typing
-	 * [Ctrl]+[D] on an empty prompt line will exit as stated in the
-	 * requirements. From `readline()` documentation:
-	 *
-	 * "If readline encounters an EOF while reading the line, and the line is
-	 * empty at that point, then (char *)NULL is returned. Otherwise, the line
-	 * is ended just as if a newline had been typed."
-	 */
-	/*
-	while ((in_str = readline("# "))) {
-		// Check input to ignore and show the prompt again
-		if (verbose) {
-			printf("-yash: checking if input should be ignored...\n");
-		}
-
-		// Check if input should be ignored
-		if (ignoreInput(in_str)) {
-			if (verbose) {
-				printf("-yash: input ignored\n");
-			}
-		} else if (runShellCmd(in_str)) {	// Check if input is a shell command
-			if (verbose) {
-				printf("-yash: ran shell command\n");
-			}
-		} else {	// Handle new job
-			if (verbose) {
-				printf("-yash: new job\n");
-			}
-			handleNewJob(in_str);
-		}
-
-		// Check for finished jobs
-		maintainJobsTable();
-	}
-
-	// Ensure a new-line on exit
-	printf("\n");
-	if (verbose) {
-		printf("-yash: exiting...\n");
-	}
-	killAllJobs();
-
-	// TODO: Ensure all child processes are dead on exit
-	*/
+	// TODO: Accept connections from clients and serve them on a new thread
 
 	// For now do nothing
 	while(true) {
 		// Sleep
 		sleep(10);
-		perror("Run yashd main loop");
+		fprintf(stderr, "%s yashd[daemon]: INFO: Run yashd main loop\n",
+						timeStr(buff, BUFF_SIZE_TIMESTAMP));
 	}
+
+	// TODO: Ensure all threads and child processes are dead on exit
 
 	return (EXIT_OK);
 }

@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
@@ -54,6 +55,7 @@
 #define CHILD_COUNT_SIMPLE 1	//! Number of children processes in a simple command without pipes
 #define CHILD_COUNT_PIPE 2		//! Number of children processes in a command with a pipe
 #define SYSCALL_RETURN_ERR -1	//! Value returned on a system call error
+#define BUFF_SIZE_TIMESTAMP 24	//! Timestamp string buffer size
 
 #define EMPTY_STR "\0"
 #define EMPTY_ARRAY -1
