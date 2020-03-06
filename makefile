@@ -1,6 +1,7 @@
 # Project makefile
 
-TARGET := yashd
+TARGET1 := yashd
+TARGET2 := yash
 
 # Important directories
 CW_DIR := $(shell pwd)
@@ -24,12 +25,16 @@ OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(TARGET1) $(TARGET2)
 
 debug: CFLAGS += -g
-debug: $(TARGET)
+debug: $(TARGET1) $(TARGET2)
 
-$(TARGET): $(OBJ)
+$(TARGET1): yashd.o shell.o
+	mkdir -p $(BIN_DIR)
+	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $(BIN_DIR)/$@
+
+$(TARGET2): yash.o
 	mkdir -p $(BIN_DIR)
 	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $(BIN_DIR)/$@
 
@@ -41,5 +46,5 @@ $(OBJ_DIR):
 
 clean:
 	$(RM) $(OBJ)
-	rm -f core $(BIN_DIR)/$(TARGET)
+	rm -f core $(BIN_DIR)/$(TARGET1) $(BIN_DIR)/$(TARGET2)
 

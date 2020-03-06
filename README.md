@@ -11,6 +11,25 @@ Authors:
  * Utkarsh Vardan <uvardan@utexas.edu>
 
 
+Compiling
+---------
+
+To compile the full project, run the following command from the root project
+folder `yashd`:
+
+```console
+make
+```
+
+Other compiling options are:
+
+ * `make debug`: To compile with GDB symbols enabled.
+ 
+ * `make yashd`: To compile the daemon only.
+ 
+ * `make yash`: To compile the client only.
+
+
 Usage
 -----
 
