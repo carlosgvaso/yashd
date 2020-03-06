@@ -34,6 +34,8 @@
 #include <readline/history.h>
 
 #define PATHMAX 255			//! Max length of a path
+#define MAX_HOSTNAME_LEN 80	//! Max hostname length
+#define MAX_CONNECT_QUEUE 5	//! Max queue of pending connections
 #define MAX_CMD_LEN 2000	//! Max command length as per requirements
 #define MAX_TOKEN_LEN 30	//! Max token length as per requirements
 #define MAX_ERROR_LEN 256	//! Max error message length
@@ -77,11 +79,12 @@
 #define JOB_STATUS_STOPPED "Stopped\0"	//! Shell job status stopped
 #define JOB_STATUS_DONE "Done\0"		//! Shell job status done
 
-#define EXIT_OK 0		//! No error
-#define EXIT_ERR 1		//! Unknown error
-#define EXIT_DAEMON 2	//! Daemon process error
-#define EXIT_ERR_ARG 3	//! Wrong argument provided
-#define EXIT_ERR_CMD 4	//! Command syntax error
+#define EXIT_OK 0			//! No error
+#define EXIT_ERR 1			//! Unknown error
+#define EXIT_ERR_ARG 2		//! Wrong argument provided
+#define EXIT_ERR_DAEMON 3	//! Daemon process error
+#define EXIT_ERR_SOCKET 4	//! Socket error
+#define EXIT_ERR_CMD 5		//! Command syntax error
 
 
 /**
@@ -168,11 +171,16 @@ void handleNewJob(char* input);
 void maintainJobsTable();
 void killAllJobs();
 void *run_shell(void *arg);
+
+char *timeStr(char *buff, int size);
 bool isNumber(char number[]);
 cmd_args_t parseArgs(int argc, char** argv);
 void sigPipe(int n);
 void sigChld(int n);
 void daemonInit(const char *const path, uint mask);
+void reusePort(int sock);
+int createSocket(int port);
+
 int main(int argc, char** argv);
 
 #endif

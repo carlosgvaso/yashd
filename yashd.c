@@ -1,7 +1,7 @@
 /**
  * @file yashd.c
  *
- * @brief YASH shell.
+ * @brief Yash shell daemon.
  *
  * @author:	Jose Carlos Martinez Garcia-Vaso <carlosgvaso@gmail.com>
  */
@@ -16,6 +16,28 @@ extern int errno;
 
 static char log_path[PATHMAX+1];
 static char pid_path[PATHMAX+1];
+
+
+/**
+ * @brief Generate a string with the current timestamp in syslog format
+ *
+ * @param	buff	Buffer to hold the timestamp
+ * @param	size	Buffer size
+ * @return	String with current timestamp in syslog format
+ */
+char *timeStr(char *buff, int size) {
+	struct tm sTm;
+
+	time_t now = time(NULL);
+	gmtime_r(&now, &sTm);
+
+	if (!strftime(buff, size, "%b %e %H:%M:%S", &sTm)) {
+		perror("Could not format timestamp");
+		strcpy(buff, "Jan  1 00:00:00\0");
+	}
+
+	return buff;
+}
 
 
 /**
@@ -183,7 +205,7 @@ void daemonInit(const char *const path, uint mask) {
 	// Put server in background (with init/systemd as parent)
 	if ((pid = fork()) < 0) {
 		perror("daemon_init: Cannot fork process");
-		safeExit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+		safeExit(EXIT_ERR_DAEMON);	// TODO: Evaluate if we need this safe exit
 	} else if (pid > 0) {	// Parent
 		// No need for safe exit because parent is done
 		exit(EXIT_OK);
@@ -198,7 +220,7 @@ void daemonInit(const char *const path, uint mask) {
 	// Redirect stdin and stdout to /dev/null
 	if ((fd = open("/dev/null", O_RDWR)) < 0) {
 		perror("daemon_init: Error: Failed to open /dev/null");
-		safeExit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+		safeExit(EXIT_ERR_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
 	dup2(fd, STDIN_FILENO); /* detach stdin */
 	dup2(fd, STDOUT_FILENO); /* detach stdout */
@@ -215,11 +237,11 @@ void daemonInit(const char *const path, uint mask) {
 	// Set signal handlers
 	if (signal(SIGCHLD, sigChld) < 0) {
 		perror("daemon_init: Error: Could not set signal handler for SIGCHLD");
-		safeExit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+		safeExit(EXIT_ERR_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
 	if (signal(SIGPIPE, sigPipe) < 0) {
 		perror("daemon_init: Error: Could not set signal handler for SIGPIPE");
-		safeExit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+		safeExit(EXIT_ERR_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
 
 	/*
@@ -245,12 +267,12 @@ void daemonInit(const char *const path, uint mask) {
 	/* Make sure only one server is running */
 	if ((k = open(pid_path, O_RDWR | O_CREAT, 0666)) < 0) {
 		perror("daemon_init: Error: Could not open PID file");
-		safeExit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+		safeExit(EXIT_ERR_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
 	if (lockf(k, F_TLOCK, 0) != 0) {
 		perror("daemon_init: Warning: Could not lock PID file because other "
 				"daemon instance is running");
-		safeExit(EXIT_DAEMON);	// TODO: Evaluate if we need this safe exit
+		safeExit(EXIT_ERR_DAEMON);	// TODO: Evaluate if we need this safe exit
 	}
 
 	/* Save server's pid without closing file (so lock remains)*/
@@ -262,24 +284,95 @@ void daemonInit(const char *const path, uint mask) {
 
 
 /**
- * @brief Generate a string with the current timestamp in syslog format
+ * @brief Reuse TCP port
  *
- * @param	buff	Buffer to hold the timestamp
- * @param	size	Buffer size
- * @return	String with current timestamp in syslog format
+ * @param	s	Socket
  */
-char *timeStr(char *buff, int size) {
-	struct tm sTm;
+void reusePort(int s) {
+	int one = 1;
 
-	time_t now = time(NULL);
-	gmtime_r(&now, &sTm);
+	if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*) &one, sizeof(one))
+			== -1) {
+		char time_buff[BUFF_SIZE_TIMESTAMP];
+		fprintf(stderr, "%s yashd[daemon]: ERROR: error in setsockopt, "
+				"SO_REUSEPORT \n", timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
+		exit(EXIT_ERR_SOCKET);
+	}
+}
 
-	if (!strftime(buff, size, "%b %e %H:%M:%S", &sTm)) {
-		perror("Could not format timestamp");
-		strcpy(buff, "Jan  1 00:00:00\0");
+
+/**
+ * @brief Create and open server socket
+ *
+ * @param	port	Socket port number
+ */
+int createSocket(int port) {
+	char time_buff[BUFF_SIZE_TIMESTAMP];
+	char hostname_str[MAX_HOSTNAME_LEN];
+	int sd, pn;
+	socklen_t length;
+	struct sockaddr_in server;
+	struct hostent *hp,* gethostbyname();
+
+	// Get host information, NAME and INET ADDRESS
+	gethostname(hostname_str, MAX_HOSTNAME_LEN);
+	// strcpy(ThisHost,"localhost");
+
+	fprintf(stderr, "%s yashd[daemon]: TCP server running at hostname: %s\n",
+			timeStr(time_buff, BUFF_SIZE_TIMESTAMP), hostname_str);
+
+	if ((hp = gethostbyname(hostname_str)) == NULL) {
+		fprintf(stderr, "%s yashd[daemon]: ERROR: Cannot find host %s\n",
+				timeStr(time_buff, BUFF_SIZE_TIMESTAMP), hostname_str);
+		exit(EXIT_ERR_SOCKET);
 	}
 
-	return buff;
+	bcopy(hp->h_addr, &(server.sin_addr), hp->h_length);
+	fprintf(stderr, "%s yashd[daemon]: TCP server INET ADDRESS is: %s\n",
+			timeStr(time_buff, BUFF_SIZE_TIMESTAMP),
+			inet_ntoa(server.sin_addr));
+
+	// Construct name of socket
+	server.sin_family = AF_INET;
+	// server.sin_family = hp->h_addrtype;
+
+	server.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	pn = htons(port);
+	server.sin_port = pn;
+
+	// Create socket on which to send  and receive
+	sd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	// sd = socket (hp->h_addrtype,SOCK_STREAM,0);
+
+	if (sd < 0) {
+		perror("ERROR: Opening stream socket");
+		exit(EXIT_ERR_SOCKET);
+	}
+
+	/* Allow the server to re-start quickly instead of waiting for TIME_WAIT
+	 * which can be as large as 2 minutes
+	 */
+	reusePort(sd);
+	if (bind(sd, (struct sockaddr*) &server, sizeof(server)) < 0) {
+		close(sd);
+		perror("ERROR: Binding name to stream socket");
+		exit(EXIT_ERR_SOCKET);
+	}
+
+	// Get port information and print it out
+	length = sizeof(server);
+	if (getsockname(sd, (struct sockaddr*) &server, &length)) {
+		perror("ERROR: Getting socket name");
+		exit(EXIT_ERR_SOCKET);
+	}
+	fprintf(stderr, "%s yashd[daemon]: INFO: Server Port is: %d\n",
+			timeStr(time_buff, BUFF_SIZE_TIMESTAMP), ntohs(server.sin_port));
+
+	// Accept TCP connections from clients
+	listen(sd, MAX_CONNECT_QUEUE);
+
+	return sd;
 }
 
 
@@ -290,8 +383,12 @@ char *timeStr(char *buff, int size) {
  * @param argv	Array of command line arguments
  * @return	Errorcode
  */
-int main(int argc, char** argv) {
-	char buff[BUFF_SIZE_TIMESTAMP];
+int main(int argc, char **argv) {
+	bool run = true;
+	char time_buff[BUFF_SIZE_TIMESTAMP];
+	int s, ps;
+	socklen_t fromlen;
+	struct sockaddr_in from;
 
 	// Process command line arguments
 	args = parseArgs(argc, argv);
@@ -302,16 +399,23 @@ int main(int argc, char** argv) {
 	daemonInit(DAEMON_DIR, DAEMON_UMASK);
 
 	// Set up server socket
-	//createSocket();
+	s = createSocket(args.port);
 
 	// TODO: Accept connections from clients and serve them on a new thread
+	fromlen = sizeof(from);
+	while(run) {
 
-	// For now do nothing
-	while(true) {
+		// Accept connection
+		ps  = accept(s, (struct sockaddr *)&from, &fromlen);
+		close(s);	// TODO: Is this needed?
+
+		// Spawn thread
+		close(ps);	// TODO: Delete this
+
 		// Sleep
 		sleep(10);
 		fprintf(stderr, "%s yashd[daemon]: INFO: Run yashd main loop\n",
-						timeStr(buff, BUFF_SIZE_TIMESTAMP));
+						timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
 	}
 
 	// TODO: Ensure all threads and child processes are dead on exit
