@@ -30,12 +30,15 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#include <pthread.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 
 #define PATHMAX 255			//! Max length of a path
+#define MAX_CONCURRENT_CLIENTS 50	//! Max number of clients connected
 #define MAX_HOSTNAME_LEN 80	//! Max hostname length
 #define MAX_CONNECT_QUEUE 5	//! Max queue of pending connections
+#define MAIN_LOOP_SLEEP_TIME 0.5	//! Main loop time to sleep between iters
 #define MAX_CMD_LEN 2000	//! Max command length as per requirements
 #define MAX_TOKEN_LEN 30	//! Max token length as per requirements
 #define MAX_ERROR_LEN 256	//! Max error message length
@@ -84,7 +87,8 @@
 #define EXIT_ERR_ARG 2		//! Wrong argument provided
 #define EXIT_ERR_DAEMON 3	//! Daemon process error
 #define EXIT_ERR_SOCKET 4	//! Socket error
-#define EXIT_ERR_CMD 5		//! Command syntax error
+#define EXIT_ERR_THREAD 5	//! Thread error
+#define EXIT_ERR_CMD 6		//! Command syntax error
 
 
 /**
@@ -101,11 +105,24 @@ typedef struct _cmd_args_t {
 
 
 /**
- * @brief Struct to organize all the necessary thread arguments
+ * @brief Struct to organize all the necessary arguments passed to a thread
  */
-typedef struct _thread_args_t {
-	cmd_args_t cmd_args;	// Command line arguments
-} thread_args_t;
+typedef struct _th_args_t {
+	cmd_args_t cmd_args;		// Command line arguments
+	int ps;						// Socket fd
+	struct sockaddr_in from;	// Client connection information
+} th_args_t;
+
+
+/**
+ * @brief Struct to organize all the info for an entry in the threads table
+ */
+typedef struct _th_info {
+	pthread_t my_tid;
+	int my_socket;
+	int shell_pid;
+	int pthread_pipe_fd[2];
+} th_info_t;
 
 
 /**
@@ -180,7 +197,7 @@ void sigChld(int n);
 void daemonInit(const char *const path, uint mask);
 void reusePort(int sock);
 int createSocket(int port);
-
+void *serverThread(void *args);
 int main(int argc, char** argv);
 
 #endif

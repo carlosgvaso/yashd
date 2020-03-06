@@ -6,7 +6,7 @@
 
 
 // Globals
-static thread_args_t *args;
+static th_args_t *args;
 
 extern int errno;
 
@@ -865,7 +865,7 @@ void killAllJobs() {
  */
 void *run_shell(void *targs) {
 	// Set up command line arguments
-	args = (thread_args_t *) targs;
+	args = (th_args_t *) targs;
 
 	// Old yash code
 	char* in_str;

@@ -17,7 +17,8 @@ PFLAGS := -I$(INC_DIR)
 #CFLAGS := -D_POSIX_C_SOURCE -std=gnu11 -Wall -Werror
 CFLAGS := -std=gnu11 -Wall -Werror
 #LDFLAGS := -Llib
-LDLIBS := -lreadline
+LDLIBS1 := -lpthread -lreadline
+LDLIBS2 := -lreadline
 
 DEP := $(wildcard $(INC_DIR)/*.h)
 SRC := $(wildcard $(SRC_DIR)/*.c)
@@ -32,11 +33,11 @@ debug: $(TARGET1) $(TARGET2)
 
 $(TARGET1): yashd.o shell.o
 	mkdir -p $(BIN_DIR)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $(BIN_DIR)/$@
+	$(CC) $(LDFLAGS) $^ $(LDLIBS1) -o $(BIN_DIR)/$@
 
 $(TARGET2): yash.o
 	mkdir -p $(BIN_DIR)
-	$(CC) $(LDFLAGS) $^ $(LDLIBS) -o $(BIN_DIR)/$@
+	$(CC) $(LDFLAGS) $^ $(LDLIBS2) -o $(BIN_DIR)/$@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(DEP) | $(OBJ_DIR)
 	$(CC) $(PFLAGS) $(CFLAGS) -c $< -o $@
