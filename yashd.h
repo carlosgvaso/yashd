@@ -115,6 +115,7 @@ typedef struct _cmd_args_t {
  */
 typedef struct _th_args_t {
 	cmd_args_t cmd_args;		// Command line arguments
+	int idx;					// Thread table index
 	int ps;						// Socket fd
 	struct sockaddr_in from;	// Client connection information
 } th_args_t;
@@ -124,9 +125,10 @@ typedef struct _th_args_t {
  * @brief Struct to organize all the info for an entry in the threads table
  */
 typedef struct _th_info {
-	pthread_t my_tid;
-	int my_socket;
-	int shell_pid;
+	pthread_t tid;
+	bool run;
+	int socket;
+	int pid;
 	int pthread_pipe_fd[2];
 } th_info_t;
 
@@ -212,8 +214,13 @@ void sigChld(int n);
 void daemonInit(const char *const path, uint mask);
 void reusePort(int sock);
 int createSocket(int port);
+int searchThByTid(pthread_t tid);
+void removeThFromTableByIdx(int idx);
+void removeThFromTableByTid(pthread_t tid);
+void exitThreadSafely();
 msg_args_t parseMessage(char *msg);
 void *serverThread(void *args);
+void stopAllThreads();
 int main(int argc, char** argv);
 
 #endif

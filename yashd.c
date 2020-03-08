@@ -17,8 +17,9 @@ extern int errno;
 static char log_path[PATHMAX+1];
 static char pid_path[PATHMAX+1];
 
-th_info_t th_info_table[MAX_CONCURRENT_CLIENTS];
-int th_table_idx = 0;
+static th_info_t th_table[MAX_CONCURRENT_CLIENTS];	//! Thread table
+static int th_table_idx = 0;						//! Number of threads in table
+static pthread_mutex_t th_table_lock;				//! Thread table lock
 
 
 /**
@@ -380,6 +381,113 @@ int createSocket(int port) {
 
 
 /**
+ * @brief Search the thread table for the index of the given Thread ID
+ * @param	tid	Thread ID
+ * @return	The index of the thread, or -1 if not found
+ */
+int searchThByTid(pthread_t tid) {
+	pthread_mutex_lock(&th_table_lock);
+	for (int i=0; i<th_table_idx; i++) {
+		if (th_table[i].tid == tid) {
+			pthread_mutex_unlock(&th_table_lock);
+			return i;
+		}
+	}
+	pthread_mutex_unlock(&th_table_lock);
+
+	perror("ERROR: Could not find thread in table");
+	return -1;
+}
+
+
+/**
+ * @brief Remove thread from thread table by index
+ *
+ * @param	idx	Index of the thread to remove in the thread table
+ */
+void removeThFromTableByIdx(int idx) {
+	// Get semaphore to remove thread from thread table
+	pthread_mutex_lock(&th_table_lock);
+
+	// Check the index is within bounds
+	if (idx < 0 || idx >= th_table_idx) {
+		perror("Thread index provided not in thread table");
+		return;
+	}
+
+	// Reduce the index if thread to remove is at the end of the table
+	if (th_table_idx-1 == idx) {
+		th_table_idx--;
+	}
+	th_table[idx].tid = 0;
+	th_table[idx].run = false;
+	th_table[idx].socket = 0;
+	th_table[idx].pid = 0;
+	pthread_mutex_unlock(&th_table_lock);
+}
+
+
+/**
+ * @brief Remove thread from table by Thread ID
+ * @param	tid	Thread ID
+ */
+void removeThFromTableByTid(pthread_t tid) {
+	int th_idx = -1;
+
+	// Search thread table and get thread index on table
+	th_idx = searchThByTid(tid);
+
+	// Check we found the thread
+	if (th_idx < 0) {
+		perror("ERROR: Could not remove thread from table");
+		return;
+	}
+
+	// Get semaphore to remove thread from thread table
+	pthread_mutex_lock(&th_table_lock);
+	// Reduce the index if thread to remove is at the end of the table
+	if (th_table_idx-1 == th_idx) {
+		th_table_idx--;
+	}
+	th_table[th_idx].tid = 0;
+	th_table[th_idx].run = false;
+	th_table[th_idx].socket = 0;
+	th_table[th_idx].pid = 0;
+	pthread_mutex_unlock(&th_table_lock);
+}
+
+
+/**
+ * @brief Release necessary resources to exit the thread safely
+ */
+void exitThreadSafely() {
+
+	int th_idx = -1;
+
+	// Search thread table and get thread index on table
+	th_idx = searchThByTid(pthread_self());
+
+	// Check we found the thread
+	if (th_idx < 0) {
+		perror("ERROR: Could not exit the thread safely");
+		pthread_exit(NULL);
+	}
+
+	// Release thread resources
+	pthread_mutex_lock(&th_table_lock);
+	close(th_table[th_idx].socket);
+	pthread_mutex_unlock(&th_table_lock);
+
+
+	// Remove thread from table
+	removeThFromTableByIdx(th_idx);
+
+	// Exit thread
+	pthread_exit(NULL);
+}
+
+
+/**
  * @brief Separate the message type and arguments
  *
  * If the message is malformed, this function returns an empty msg_args_t
@@ -448,6 +556,12 @@ void *serverThread(void *thread_args) {
 	struct hostent *hp, *gethostbyname();
 	char *prompt = CMD_PROMPT;
 
+	// Get lock to add thread id to shared thread table
+	pthread_mutex_lock(&th_table_lock);
+	th_table[th_args->idx].tid = pthread_self();
+	pthread_mutex_unlock(&th_table_lock);
+
+
 	if (th_args->cmd_args.verbose) {
 		fprintf(stderr, "%s yashd[%s:%d]: INFO: Serving client on %s:%d\n",
 				timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
@@ -487,7 +601,13 @@ void *serverThread(void *thread_args) {
 		}
 		if ((rc = recv(ps, buf_msg, sizeof(buf_msg), 0)) < 0) {
 			perror("ERROR: Receiving stream message");
-			exit(EXIT_ERR_SOCKET);
+			if (th_args->cmd_args.verbose) {
+				fprintf(stderr, "%s yashd[%s:%d]: ERROR: Reading message\n",
+						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+						inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+			}
+			run_th = false;
+			break;
 		}
 
 		// Check if client disconnected or handle message
@@ -549,12 +669,48 @@ void *serverThread(void *thread_args) {
 						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
 						inet_ntoa(from.sin_addr), ntohs(from.sin_port));
 			}
-			close(ps);
 			run_th = false;	// Exit loop
+			break;
+		}
+
+		// Check thread table to see if we should exit
+		if (!th_table[th_args->idx].run) {
+			if (th_args->cmd_args.verbose) {
+				fprintf(stderr, "%s yashd[%s:%d]: INFO: Received signal to "
+						"stop thread\n",
+						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+						inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+			}
+			run_th = false;
+			break;
 		}
 	}
 
-	return EXIT_OK;
+	// Close resources, remove thread from the thread table and exit safely
+	if (th_args->cmd_args.verbose) {
+		fprintf(stderr, "%s yashd[%s:%d]: INFO: Disconnecting client...\n",
+				timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+				inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+	}
+	exitThreadSafely();
+	pthread_exit(NULL);
+}
+
+
+/**
+ * @brief Send signal to stop all threads and join them
+ */
+void stopAllThreads() {
+	pthread_t tid;
+	// Send signal to stop all threads, and join them afterwards
+	for (int i=0; i<th_table_idx; i++) {
+		// Check the entry is populated
+		if (th_table[i].run) {
+			tid = th_table[i].tid;
+			th_table[i].run = false;	// Send stop signal
+			pthread_join(tid, NULL);	// Wait for the thread to stop
+		}
+	}
 }
 
 
@@ -579,6 +735,13 @@ int main(int argc, char **argv) {
 	strcpy(log_path, DAEMON_LOG_PATH);
 	strcpy(pid_path, DAEMON_PID_PATH);
 	daemonInit(DAEMON_DIR, DAEMON_UMASK);
+
+	// Initialize thread table lock
+	if (pthread_mutex_init(&th_table_lock, NULL) != 0) {
+		fprintf(stderr, "%s yashd[daemon]: ERROR: Mutex init has failed\n",
+				timeStr(buf_time, BUFF_SIZE_TIMESTAMP));
+		exit(EXIT_ERR_THREAD);
+	}
 
 	// Set up server socket
 	s = createSocket(args.port);
@@ -615,20 +778,28 @@ int main(int argc, char **argv) {
 		th_args.cmd_args = args;
 		th_args.from = from;
 		th_args.ps = ps;
-		th_info_table[th_table_idx].my_socket = ps;
+		th_args.idx = th_table_idx;
+
+		// Add thread to end of table
+		pthread_mutex_lock(&th_table_lock);
+		th_table[th_table_idx].socket = ps;
+		th_table[th_table_idx].run = true;
+		th_table_idx++;
+		pthread_mutex_unlock(&th_table_lock);
+
 		if ((rc = pthread_create(&th, NULL, serverThread, &th_args))) {
 			fprintf(stderr, "%s yashd[daemon]: ERROR: pthread_create, rc: %d\n",
 					timeStr(buf_time, BUFF_SIZE_TIMESTAMP), (int) rc);
+
+			// Release resources and exit
 			close(ps);
-			return (EXIT_ERR_THREAD);
+			close(s);
+			pthread_mutex_destroy(&th_table_lock);
+			exit(EXIT_ERR_THREAD);
 		}
 
-		//close(ps);	// TODO: Delete this
-
-		th_table_idx++;	// TODO: Might want to do this in the thread
-
 		// Sleep
-		sleep(MAIN_LOOP_SLEEP_TIME);
+		//sleep(MAIN_LOOP_SLEEP_TIME);
 
 		if (args.verbose) {
 			fprintf(stderr, "%s yashd[daemon]: INFO: Finished iteration in "
@@ -638,6 +809,10 @@ int main(int argc, char **argv) {
 	}
 
 	// TODO: Ensure all threads and child processes are dead on exit
+	stopAllThreads();
 
-	return (EXIT_OK);
+	// Release resources and exit
+	close(s);
+	pthread_mutex_destroy(&th_table_lock);
+	exit(EXIT_OK);
 }
