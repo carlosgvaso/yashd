@@ -74,6 +74,12 @@
 #define TCP_PORT_LOWER_LIM 1024		//! Lowest TCP port allowed
 #define TCP_PORT_HIGHER_LIM 65535	//! Highest TCP port allowed
 
+#define MSG_TYPE_CTL "CTL\0"	//! Control message token
+#define MSG_TYPE_CMD "CMD\0"	//! Command message token
+#define MSG_TYPE_DELIM " "		//! Type (1st word) token delimiter
+#define MSG_ARGS_DELIM "\0"		//! Arguments token delimiter
+
+#define CMD_PROMPT "\n# \0"	//! Shell prompt
 #define CMD_BG "bg\0"		//! Shell command bg, @sa bg()
 #define CMD_FG "fg\0"		//! Shell command fg, @sa fg()
 #define CMD_JOBS "jobs\0"	//! Shell command jobs, @sa jobs()
@@ -123,6 +129,15 @@ typedef struct _th_info {
 	int shell_pid;
 	int pthread_pipe_fd[2];
 } th_info_t;
+
+
+/**
+ * @brief Struct to organize the received messages from the client
+ */
+typedef struct _msg_args {
+	char type[4];				// CMD/CTL
+	char args[MAX_CMD_LEN+1];	// Message arguments
+} msg_args_t;
 
 
 /**
@@ -197,6 +212,7 @@ void sigChld(int n);
 void daemonInit(const char *const path, uint mask);
 void reusePort(int sock);
 int createSocket(int port);
+msg_args_t parseMessage(char *msg);
 void *serverThread(void *args);
 int main(int argc, char** argv);
 

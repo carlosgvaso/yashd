@@ -292,13 +292,13 @@ void daemonInit(const char *const path, uint mask) {
  * @param	s	Socket
  */
 void reusePort(int s) {
+	char buf_time[BUFF_SIZE_TIMESTAMP];
 	int one = 1;
 
 	if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*) &one, sizeof(one))
 			== -1) {
-		char time_buff[BUFF_SIZE_TIMESTAMP];
 		fprintf(stderr, "%s yashd[daemon]: ERROR: error in setsockopt, "
-				"SO_REUSEPORT \n", timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
+				"SO_REUSEPORT \n", timeStr(buf_time, BUFF_SIZE_TIMESTAMP));
 		exit(EXIT_ERR_SOCKET);
 	}
 }
@@ -310,7 +310,7 @@ void reusePort(int s) {
  * @param	port	Socket port number
  */
 int createSocket(int port) {
-	char time_buff[BUFF_SIZE_TIMESTAMP];
+	char buf_time[BUFF_SIZE_TIMESTAMP];
 	char hostname_str[MAX_HOSTNAME_LEN];
 	int sd, pn;
 	socklen_t length;
@@ -322,17 +322,17 @@ int createSocket(int port) {
 	// strcpy(ThisHost,"localhost");
 
 	fprintf(stderr, "%s yashd[daemon]: TCP server running at hostname: %s\n",
-			timeStr(time_buff, BUFF_SIZE_TIMESTAMP), hostname_str);
+			timeStr(buf_time, BUFF_SIZE_TIMESTAMP), hostname_str);
 
 	if ((hp = gethostbyname(hostname_str)) == NULL) {
 		fprintf(stderr, "%s yashd[daemon]: ERROR: Cannot find host %s\n",
-				timeStr(time_buff, BUFF_SIZE_TIMESTAMP), hostname_str);
+				timeStr(buf_time, BUFF_SIZE_TIMESTAMP), hostname_str);
 		exit(EXIT_ERR_SOCKET);
 	}
 
 	bcopy(hp->h_addr, &(server.sin_addr), hp->h_length);
 	fprintf(stderr, "%s yashd[daemon]: TCP server INET ADDRESS is: %s\n",
-			timeStr(time_buff, BUFF_SIZE_TIMESTAMP),
+			timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
 			inet_ntoa(server.sin_addr));
 
 	// Construct name of socket
@@ -370,12 +370,65 @@ int createSocket(int port) {
 		exit(EXIT_ERR_SOCKET);
 	}
 	fprintf(stderr, "%s yashd[daemon]: INFO: Server Port is: %d\n",
-			timeStr(time_buff, BUFF_SIZE_TIMESTAMP), ntohs(server.sin_port));
+			timeStr(buf_time, BUFF_SIZE_TIMESTAMP), ntohs(server.sin_port));
 
 	// Accept TCP connections from clients
 	listen(sd, MAX_CONNECT_QUEUE);
 
 	return sd;
+}
+
+
+/**
+ * @brief Separate the message type and arguments
+ *
+ * If the message is malformed, this function returns an empty msg_args_t
+ * struct.
+ *
+ * @param	msg	Raw message string
+ * @return	Struct with the parsed message
+ */
+msg_args_t parseMessage(char *msg) {
+	char buf[MAX_CMD_LEN+5];
+	size_t len_orig, len_first;
+	msg_args_t msg_parsed;
+
+	// Remove final newline char and replace with NULL char
+	len_orig = strlen(msg);
+
+	if (msg[len_orig-1] == '\n') {
+		msg[len_orig-1] = '\0';
+	}
+
+	// Check the message is not empty (larger than "CMD \0")
+	if (len_orig <= 5) {
+		strcpy(msg_parsed.type, EMPTY_STR);
+		strcpy(msg_parsed.args, EMPTY_STR);
+		return msg_parsed;
+	}
+
+	// Copy string so strtok() doesn't modify the original string
+	strcpy(buf, msg);
+
+	// Find and save the msg type
+	// Use white space as delimiter to get the first word in the string
+	char *type = strtok(buf, MSG_TYPE_DELIM);
+	strcpy(msg_parsed.type, type);
+
+	// Check there are msg args
+	len_first = strlen(buf);
+	if (len_first >= len_orig) {
+		strcpy(msg_parsed.type, EMPTY_STR);
+		strcpy(msg_parsed.args, EMPTY_STR);
+		return msg_parsed;
+	}
+
+	// Find and save the msg arguments
+	// Use the null char as delimiter to get the second part of the string
+	char *args = strtok(NULL, MSG_ARGS_DELIM);
+	strcpy(msg_parsed.args, args);
+
+	return msg_parsed;
 }
 
 
@@ -388,136 +441,121 @@ void *serverThread(void *thread_args) {
 	th_args_t *th_args = (th_args_t*) thread_args;
 	int ps = th_args->ps;
 	struct sockaddr_in from = th_args->from;
-	char buf[512];
+	bool run_th = true;
+	char buf_time[BUFF_SIZE_TIMESTAMP];
+	char buf_msg[MAX_CMD_LEN+5];	// Add space for CMD/CTL + <blank> and "\0"
 	int rc;
 	struct hostent *hp, *gethostbyname();
+	char *prompt = CMD_PROMPT;
 
 	if (th_args->cmd_args.verbose) {
-		char time_buff[24];
-		fprintf(stderr, "%s yashd[thread]: INFO: Starting new thread\n",
-				timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
+		fprintf(stderr, "%s yashd[%s:%d]: INFO: Serving client on %s:%d\n",
+				timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+				inet_ntoa(from.sin_addr), ntohs(from.sin_port),
+				inet_ntoa(from.sin_addr), ntohs(from.sin_port));
 	}
 
-	fprintf(stderr, "Serving %s:%d\n", inet_ntoa(from.sin_addr), ntohs(from.sin_port));
 	if ((hp = gethostbyaddr((char*) &from.sin_addr.s_addr,
-			sizeof(from.sin_addr.s_addr), AF_INET)) == NULL)
-		fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
-	else
-		fprintf(stderr, "(Name is : %s)\n", hp->h_name);
+			sizeof(from.sin_addr.s_addr), AF_INET)) == NULL) {
+		if (th_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: WARN: Cannot find host: %s\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(from.sin_addr), ntohs(from.sin_port),
+					inet_ntoa(from.sin_addr));
+		}
+	}
 
-	/**  get data from  client and send it back */
-	for (;;) {
-		fprintf(stderr, "\n...server is waiting...\n");
-		if ((rc = recv(ps, buf, sizeof(buf), 0)) < 0) {
-			perror("receiving stream  message");
+
+	// Send prompt and read messages from client
+	while (run_th) {
+		// Send prompt
+		if (th_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: Sending prompt\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+		}
+		rc = strlen(prompt);
+		if (send(ps, prompt, (size_t) rc, 0) < 0) {
+			perror("ERROR: Sending stream message");
+		}
+
+		// Read client's message
+		if (th_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: Reading message...\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+		}
+		if ((rc = recv(ps, buf_msg, sizeof(buf_msg), 0)) < 0) {
+			perror("ERROR: Receiving stream message");
 			exit(EXIT_ERR_SOCKET);
 		}
+
+		// Check if client disconnected or handle message
 		if (rc > 0) {
-			buf[rc] = '\0';
-			fprintf(stderr, "Received: %s\n", buf);
-			fprintf(stderr, "From TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
-					ntohs(from.sin_port));
-			fprintf(stderr, "(Name is : %s)\n", hp->h_name);
-			if (send(ps, buf, rc, 0) < 0)
-				perror("sending stream message");
+			buf_msg[rc] = '\0';	// Add null char to the end of the msg
+			if (th_args->cmd_args.verbose) {
+				fprintf(stderr, "%s yashd[%s:%d]: INFO: Message received: %s\n",
+						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+						inet_ntoa(from.sin_addr), ntohs(from.sin_port),
+						buf_msg);
+			}
+
+			// Parse message
+			msg_args_t msg = parseMessage(buf_msg);
+			if (th_args->cmd_args.verbose) {
+				fprintf(stderr, "%s yashd[%s:%d]: INFO: Message parsed %s: %s\n",
+						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+						inet_ntoa(from.sin_addr), ntohs(from.sin_port),
+						msg.type, msg.args);
+			}
+
+			if (!strcmp(msg.type, MSG_TYPE_CTL)) {
+				if (th_args->cmd_args.verbose) {
+					fprintf(stderr, "%s yashd[%s:%d]: INFO: Signal received: "
+							"%s\n",
+							timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+							inet_ntoa(from.sin_addr), ntohs(from.sin_port),
+							msg.args);
+				}
+
+				// TODO: Deliver signal and reply to client
+				// For now we are just sending the message back
+				if (send(ps, buf_msg, rc, 0) < 0) {
+					perror("ERROR: Sending stream message");
+				}
+			} else if (!strcmp(msg.type, MSG_TYPE_CMD)) {
+				fprintf(stderr, "%s yashd[%s:%d]: %s\n",
+						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+						inet_ntoa(from.sin_addr), ntohs(from.sin_port),
+						msg.args);
+
+				// TODO: Run command and reply to client
+				// For now we are just sending the message back
+				if (send(ps, buf_msg, rc, 0) < 0) {
+					perror("ERROR: Sending stream message");
+				}
+			} else {
+				if (th_args->cmd_args.verbose) {
+					fprintf(stderr, "%s yashd[%s:%d]: ERROR: Unknown message "
+							"received: %s\n",
+							timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+							inet_ntoa(from.sin_addr), ntohs(from.sin_port),
+							buf_msg);
+				}
+			}
 		} else {
-			fprintf(stderr, "TCP/Client: %s:%d\n", inet_ntoa(from.sin_addr),
-					ntohs(from.sin_port));
-			fprintf(stderr, "(Name is : %s)\n", hp->h_name);
-			fprintf(stderr, "Disconnected..\n");
+			if (th_args->cmd_args.verbose) {
+				fprintf(stderr, "%s yashd[%s:%d]: INFO: Client disconnected\n",
+						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+						inet_ntoa(from.sin_addr), ntohs(from.sin_port));
+			}
 			close(ps);
-			exit(EXIT_OK);
+			run_th = false;	// Exit loop
 		}
 	}
+
+	return EXIT_OK;
 }
-/*
-	th_args_t *th_args = (th_args_t*) thread_args;
-	th_info_table[th_table_idx].my_tid = pthread_self();
-	int ps = th_args->ps;
-	struct sockaddr_in from = th_args->from;
-	char buf[512];
-	ssize_t rc;
-	struct hostent *hp,* gethostbyname();
-	bool run_th = true;
-	int new_pid;
-	char **args;
-	char *buf_copy;
-
-	char *prompt;
-	prompt = strdup("# ");
-	rc = strlen(prompt);
-	if (send(ps, prompt, (size_t) rc, 0) < 0)
-		perror("sending stream message");
-
-	if ((hp = gethostbyaddr((char*) &from.sin_addr.s_addr,
-			sizeof(from.sin_addr.s_addr), AF_INET)) == NULL)
-		fprintf(stderr, "Can't find host %s\n", inet_ntoa(from.sin_addr));
-*/
-/*
-	if (pipe(th_info_table[th_table_idx].pthread_pipe_fd) == -1) {
-		perror("pthread pipe\n");
-		close(ps);
-		exit(EXIT_ERR);
-	}
-
-	//  get data from  clients and send it back
-	new_pid = fork();
-	if (new_pid == 0) {
-		close(proc_info_table[table_index_counter].pthread_pipe_fd[1]);
-		dup2(proc_info_table[table_index_counter].pthread_pipe_fd[0],
-				STDIN_FILENO);
-		proc_info_table[table_index_counter].shell_pid = getpid();
-		fprintf(stderr, "set table shell pid to %d\n",
-				proc_info_table[table_index_counter].shell_pid);
-
-		yash_prog_loop(buf, psd);
-	} else if (new_pid > 0) {
-		int returned_index = get_proc_info_index_pid(getpid());
-		proc_info_table[table_index_counter].shell_pid = new_pid;
-		//        printf("my_socket: %d, returned index: %d, pid: %d\n",proc_info_table[returned_index].my_socket, returned_index, getpid());
-		close(proc_info_table[table_index_counter].pthread_pipe_fd[0]);
-
-		table_index_counter++;
-		for (;;) {
-			cleanup(buf);
-			if ((rc = recv(psd, buf, sizeof(buf), 0)) < 0) {
-				perror("receiving stream  message");
-				exit(-1);
-			}
-			dup2(
-					proc_info_table[get_proc_info_index_by_tid(pthread_self())].pthread_pipe_fd[1],
-					STDOUT_FILENO);
-			if (rc > 0) {
-				buf[rc] = '\0';
-				buf_copy = strdup(buf);
-				args = parseLine(buf_copy);
-				if (strcmp(args[0], "CTL") == 0) {
-					pid_ch1 = proc_info_table[get_proc_info_index_by_tid(
-							pthread_self())].shell_pid;
-					if (strcmp(args[1], "c") == 0) {
-						fprintf(stderr, "sending sig int to pid %d\n", pid_ch1);
-						kill(pid_ch1, SIGINT);
-					}
-					if (strcmp(args[1], "z") == 0) {
-						fprintf(stderr, "sending sig tstp to pid %d\n",
-								pid_ch1);
-						kill(pid_ch1, SIGTSTP);
-					}
-				}
-				if (strcmp(args[0], "CMD") == 0) {
-					write_to_log(buf, (size_t) rc, inet_ntoa(from.sin_addr),
-							ntohs(from.sin_port));
-					printf("%s", buf);
-					//fprintf(stderr, "%s",buf);
-					fflush(stdout);
-				}
-			}
-		}
-	}
-*/
-/*
-}
-*/
 
 
 /**
@@ -529,7 +567,7 @@ void *serverThread(void *thread_args) {
  */
 int main(int argc, char **argv) {
 	bool run = true;
-	char time_buff[BUFF_SIZE_TIMESTAMP];
+	char buf_time[BUFF_SIZE_TIMESTAMP];
 	int s, ps;
 	socklen_t fromlen;
 	struct sockaddr_in from;
@@ -545,13 +583,13 @@ int main(int argc, char **argv) {
 	// Set up server socket
 	s = createSocket(args.port);
 
-	// TODO: Accept connections from clients and serve them on a new thread
+	// Accept connections from clients and serve them on a new thread
 	fromlen = sizeof(from);
 	while(run) {
 		if (args.verbose) {
 			fprintf(stderr, "%s yashd[daemon]: INFO: Started iteration in "
 					"main loop\n",
-					timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP));
 		}
 
 		pthread_t th;
@@ -560,37 +598,34 @@ int main(int argc, char **argv) {
 		// Accept connection
 		if (args.verbose) {
 			fprintf(stderr, "%s yashd[daemon]: INFO: Accepting connections\n",
-					timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP));
 		}
 		// TODO: make this a non-blocking connection?
 		ps  = accept(s, (struct sockaddr *)&from, &fromlen);
 
-		// Spawn thread
+		// Spawn thread to handle new connection
 		if (args.verbose) {
 			fprintf(stderr, "%s yashd[daemon]: INFO: Spawning thread to handle "
-					"new connection\n",
-					timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
+					"new client at %s:%d\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(from.sin_addr), ntohs(from.sin_port));
 		}
+
 		th_args_t th_args;
 		th_args.cmd_args = args;
 		th_args.from = from;
 		th_args.ps = ps;
 		th_info_table[th_table_idx].my_socket = ps;
-		if (args.verbose) {
-			fprintf(stderr, "%s yashd[daemon]: INFO: Spawning thread to handle "
-					"new connection\n",
-					timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
-		}
 		if ((rc = pthread_create(&th, NULL, serverThread, &th_args))) {
 			fprintf(stderr, "%s yashd[daemon]: ERROR: pthread_create, rc: %d\n",
-					timeStr(time_buff, BUFF_SIZE_TIMESTAMP), (int) rc);
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP), (int) rc);
 			close(ps);
 			return (EXIT_ERR_THREAD);
 		}
 
 		//close(ps);	// TODO: Delete this
 
-		th_table_idx++;
+		th_table_idx++;	// TODO: Might want to do this in the thread
 
 		// Sleep
 		sleep(MAIN_LOOP_SLEEP_TIME);
@@ -598,7 +633,7 @@ int main(int argc, char **argv) {
 		if (args.verbose) {
 			fprintf(stderr, "%s yashd[daemon]: INFO: Finished iteration in "
 					"main loop\n",
-					timeStr(time_buff, BUFF_SIZE_TIMESTAMP));
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP));
 		}
 	}
 
