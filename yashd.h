@@ -214,13 +214,14 @@ void sigChld(int n);
 void daemonInit(const char *const path, uint mask);
 void reusePort(int sock);
 int createSocket(int port);
+void printThTable();
 int searchThByTid(pthread_t tid);
 void removeThFromTableByIdx(int idx);
 void removeThFromTableByTid(pthread_t tid);
+void stopAllThreads();
 void exitThreadSafely();
 msg_args_t parseMessage(char *msg);
 void *serverThread(void *args);
-void stopAllThreads();
 int main(int argc, char** argv);
 
 #endif
