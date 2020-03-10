@@ -76,6 +76,9 @@
 
 #define MSG_TYPE_CTL "CTL\0"	//! Control message token
 #define MSG_TYPE_CMD "CMD\0"	//! Command message token
+#define MSG_CTL_SIGINT 'c'		//! Control message argument for SIGINT (ctrl+c)
+#define MSG_CTL_SIGTSTP 'z'		//! Control message argument for SIGTSTP (ctrl+z)
+#define MSG_CTL_EOF 'd'			//! Control message argument for EOF (ctrl+d)
 #define MSG_TYPE_DELIM " "		//! Type (1st word) token delimiter
 #define MSG_ARGS_DELIM "\0"		//! Arguments token delimiter
 
@@ -221,6 +224,8 @@ void removeThFromTableByTid(pthread_t tid);
 void stopAllThreads();
 void exitThreadSafely();
 msg_args_t parseMessage(char *msg);
+void handleCTLMessages(char arg, th_args_t *thread_args);
+void handleCMDMessages(char *args, th_args_t *thread_args);
 void *serverThread(void *args);
 int main(int argc, char** argv);
 

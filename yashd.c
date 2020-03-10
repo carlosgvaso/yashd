@@ -151,7 +151,9 @@ void safeExit(int errcode) {
 	//			- Close opened files (?)
 	//			- Free memory (?)
 
-	perror("yashd: Exiting daemon...");
+	char buf_time[BUFF_SIZE_TIMESTAMP];
+	fprintf(stderr, "%s yashd[daemon]: INFO: Stopping daemon...\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP));
 	exit(errcode);
 }
 
@@ -500,14 +502,13 @@ void stopAllThreads() {
  * @brief Release necessary resources to exit the thread safely
  */
 void exitThreadSafely() {
-
 	int th_idx = -1;
 
 	// Search thread table and get thread index on table
 	th_idx = searchThByTid(pthread_self());
 
 	// Check we found the thread
-	if (th_idx < 0) {
+	if (th_idx < 0 || th_idx >= th_table_idx) {
 		perror("ERROR: Could not exit the thread safely");
 		pthread_exit(NULL);
 	}
@@ -576,6 +577,80 @@ msg_args_t parseMessage(char *msg) {
 	strcpy(msg_parsed.args, args);
 
 	return msg_parsed;
+}
+
+
+/**
+ * @brief Handle CTL messages
+ *
+ * @param	arg			CTL message argument
+ * @param	thread_args	Thread arguments
+ */
+void handleCTLMessages(char arg, th_args_t *thread_args) {
+	char buf_time[BUFF_SIZE_TIMESTAMP];
+
+	switch(arg) {
+	case MSG_CTL_SIGINT:
+		// TODO: Implement sending SIGINT to child process
+		if (thread_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: Sending SIGINT to "
+					"child process\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(thread_args->from.sin_addr),
+					ntohs(thread_args->from.sin_port));
+		}
+		break;
+	case MSG_CTL_SIGTSTP:
+		// TODO: Implement sending SIGTSTP to child process
+		if (thread_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: Sending SIGTSTP to "
+					"child process\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(thread_args->from.sin_addr),
+					ntohs(thread_args->from.sin_port));
+		}
+		break;
+	case MSG_CTL_EOF:
+		// Disconnect from client
+		// Close resources, remove thread from the thread table and exit safely
+		if (thread_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: EOF received\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(thread_args->from.sin_addr),
+					ntohs(thread_args->from.sin_port));
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: Disconnecting client...\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(thread_args->from.sin_addr),
+					ntohs(thread_args->from.sin_port));
+		}
+		exitThreadSafely();
+		break;
+	default:
+		fprintf(stderr, "%s yashd[%s:%d]: ERROR: Unknown CTL message argument "
+				"received: %c\n",
+				timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+				inet_ntoa(thread_args->from.sin_addr),
+				ntohs(thread_args->from.sin_port), arg);
+	}
+}
+
+
+/**
+ * @brief Handle CMD messages
+ *
+ * @param	args		CMD message arguments
+ * @param	thread_args	Thread arguments
+ */
+void handleCMDMessages(char *args, th_args_t *thread_args) {
+	char buf_time[BUFF_SIZE_TIMESTAMP];
+
+	// TODO: Implement running the job received
+	if (thread_args->cmd_args.verbose) {
+		fprintf(stderr, "%s yashd[%s:%d]: INFO: Running job: %s\n",
+				timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+				inet_ntoa(thread_args->from.sin_addr),
+				ntohs(thread_args->from.sin_port), args);
+	}
 }
 
 
@@ -666,7 +741,8 @@ void *serverThread(void *thread_args) {
 			// Parse message
 			msg_args_t msg = parseMessage(buf_msg);
 			if (th_args->cmd_args.verbose) {
-				fprintf(stderr, "%s yashd[%s:%d]: INFO: Message parsed %s: %s\n",
+				fprintf(stderr, "%s yashd[%s:%d]: INFO: Message parsed %s: "
+						"%s\n",
 						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
 						inet_ntoa(from.sin_addr), ntohs(from.sin_port),
 						msg.type, msg.args);
@@ -681,22 +757,30 @@ void *serverThread(void *thread_args) {
 							msg.args);
 				}
 
-				// TODO: Deliver signal and reply to client
+				// Handle CTL messages
+				handleCTLMessages(msg.args[0], th_args);
+				// TODO: Remove after implementing handleCTLMessages()
+				// *** Start of section to remove ******************************
+				// For now, we are just sending the message back
+				if (send(ps, buf_msg, rc, 0) < 0) {
+					perror("ERROR: Sending stream message");
+				}
+				// *** End of section to remove ********************************
+			} else if (!strcmp(msg.type, MSG_TYPE_CMD)) {
+				// Handle CMD messages
+				handleCMDMessages(msg.args, th_args);
+				// TODO: Remove after implementing handleCMDMessages()
+				// *** Start of section to remove ******************************
 				// For now we are just sending the message back
 				if (send(ps, buf_msg, rc, 0) < 0) {
 					perror("ERROR: Sending stream message");
 				}
-			} else if (!strcmp(msg.type, MSG_TYPE_CMD)) {
+				// *** End of section to remove ********************************
+
 				fprintf(stderr, "%s yashd[%s:%d]: %s\n",
 						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
 						inet_ntoa(from.sin_addr), ntohs(from.sin_port),
 						msg.args);
-
-				// TODO: Run command and reply to client
-				// For now we are just sending the message back
-				if (send(ps, buf_msg, rc, 0) < 0) {
-					perror("ERROR: Sending stream message");
-				}
 			} else {
 				if (th_args->cmd_args.verbose) {
 					fprintf(stderr, "%s yashd[%s:%d]: ERROR: Unknown message "
@@ -724,7 +808,7 @@ void *serverThread(void *thread_args) {
 						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
 						inet_ntoa(from.sin_addr), ntohs(from.sin_port));
 			}
-			run_th = false;
+			run_th = false;	// Exit loop
 			break;
 		}
 	}
