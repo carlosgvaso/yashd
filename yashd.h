@@ -1,9 +1,10 @@
 /**
  * @file  yashd.h
  *
- * @brief Main functionality of the YASH shell.
+ * @brief Yash shell daemon
  *
- * @author:	Jose Carlos Martinez Garcia-Vaso
+ * @author:	Jose Carlos Martinez Garcia-Vaso <carlosgvaso@utexas.edu>
+ * @author: Utkarsh Vardan <uvardan@utexas.edu>
  */
 
 #ifndef YASHD_H
@@ -33,15 +34,12 @@
 #include <pthread.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include "yashd_defs.h"
 
 #define PATHMAX 255			//! Max length of a path
 #define MAX_CONCURRENT_CLIENTS 50	//! Max number of clients connected
-#define MAX_HOSTNAME_LEN 80	//! Max hostname length
 #define MAX_CONNECT_QUEUE 5	//! Max queue of pending connections
 #define MAIN_LOOP_SLEEP_TIME 0.5	//! Main loop time to sleep between iters
-#define MAX_CMD_LEN 2000	//! Max command length as per requirements
-#define MAX_TOKEN_LEN 30	//! Max token length as per requirements
-#define MAX_ERROR_LEN 256	//! Max error message length
 #define MAX_STATUS_LEN 8	//! Max status string length
 /**
  * @brief Max number of tokens per command.
@@ -49,7 +47,7 @@
  * This is calculated as follows:
  *
  * \f[
- * \dfrac{MAX_CMD_LEN}{2} = 1000
+ * \frac{MAX_CMD_LEN}{2} = 1000
  * \f]
  *
  * The 2 comes from the min token size (1), plus a whitespace char as token
@@ -62,17 +60,11 @@
 #define SYSCALL_RETURN_ERR -1	//! Value returned on a system call error
 #define BUFF_SIZE_TIMESTAMP 24	//! Timestamp string buffer size
 
-#define EMPTY_STR "\0"
-#define EMPTY_ARRAY -1
-
-#define DAEMON_PORT 3826					//! Default daemon TCP server port
+//#define DAEMON_PORT 3826					//! Default daemon TCP server port
 #define DAEMON_DIR "/tmp/"					//! Daemon safe directory
 #define DAEMON_LOG_PATH "/tmp/yashd.log"	//! Daemon log path
 #define DAEMON_PID_PATH "/tmp/yashd.pid"	//! Daemon PID file path
 #define DAEMON_UMASK 0						//! Daemon umask
-
-#define TCP_PORT_LOWER_LIM 1024		//! Lowest TCP port allowed
-#define TCP_PORT_HIGHER_LIM 65535	//! Highest TCP port allowed
 
 #define MSG_TYPE_CTL "CTL\0"	//! Control message token
 #define MSG_TYPE_CMD "CMD\0"	//! Command message token
@@ -90,14 +82,6 @@
 #define JOB_STATUS_RUNNING "Running\0"	//! Shell job status running
 #define JOB_STATUS_STOPPED "Stopped\0"	//! Shell job status stopped
 #define JOB_STATUS_DONE "Done\0"		//! Shell job status done
-
-#define EXIT_OK 0			//! No error
-#define EXIT_ERR 1			//! Unknown error
-#define EXIT_ERR_ARG 2		//! Wrong argument provided
-#define EXIT_ERR_DAEMON 3	//! Daemon process error
-#define EXIT_ERR_SOCKET 4	//! Socket error
-#define EXIT_ERR_THREAD 5	//! Thread error
-#define EXIT_ERR_CMD 6		//! Command syntax error
 
 
 /**
@@ -207,7 +191,7 @@ void runJob(Job jobs_arr[], int* last_job);
 void handleNewJob(char* input);
 void maintainJobsTable();
 void killAllJobs();
-void *run_shell(void *arg);
+int startJob(char *job_str);
 
 char *timeStr(char *buff, int size);
 bool isNumber(char number[]);
