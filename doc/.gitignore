@@ -1,0 +1,6 @@
+# Documentation folder gitignore
+
+# Ignore everything except this file
+*
+!.gitignore
+
