@@ -10,20 +10,7 @@
  */
 
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <signal.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
-
-#define MAX_HN 80
-#define BUFFER_SIZE 50000
-#define MAX_INPT_LEN 200
+#include "yash.h"
 
 
 // Globals
@@ -35,8 +22,9 @@ int sd;
 
 // Functions
 /**
+ * @brief Delete data in string buffer
  *
- * @param buffer
+ * @param	buffer	String buffer
  */
 void cleanBuffer(char *buffer) {
 	int i;
@@ -47,8 +35,9 @@ void cleanBuffer(char *buffer) {
 
 
 /**
+ * @brief Handle signals
  *
- * @param sigNum
+ * @param	sigNum	Signal to handle
  */
 static void clientSignalHandler(int sigNum) {
 	if (sigNum == SIGINT) {
@@ -72,7 +61,7 @@ static void clientSignalHandler(int sigNum) {
 
 
 /**
- *
+ * @brief Read user input from terminal, and send it to the yashd server
  */
 void receiveUserInput() {
 
@@ -108,10 +97,11 @@ void receiveUserInput() {
 
 
 /**
+ * @brief Point of entry
  *
- * @param argc
- * @param argv
- * @return
+ * @param	argc	Number of command line arguments
+ * @param	argv	Array of command line arguments
+ * @return	Error code
  */
 int main(int argc, char **argv) {
 	int child_pid;
