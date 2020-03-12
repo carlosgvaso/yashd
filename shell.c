@@ -1,27 +1,29 @@
 /**
+ * @file  shell.c
  *
+ * @brief Main functionality of the yash shell
+ *
+ * @author:	Jose Carlos Martinez Garcia-Vaso <carlosgvaso@utexas.edu>
+ * @author: Utkarsh Vardan <uvardan@utexas.edu>
  */
 
 #include "yashd.h"
 
 
 // Globals
-static th_args_t *args;
+//static th_args_t args;
 
 extern int errno;
 
-static Job job_arr[MAX_CONCURRENT_JOBS];	//! Current jobs array
-static int last_job = EMPTY_ARRAY;			//! Last job index in job_arr
-
 
 /**
- * @brief Check for input that should be ignored.
+ * \brief Check for input that should be ignored.
  *
  * This function checks for empty input strings and strings consisting of
  * whitespace characters only, and ignores such input.
  *
- * @param input_str	Inupt string to check
- * @return	1 if the input should be ignored, 0 otherwise
+ * \param	input_str	Inupt string to check
+ * \return	1 if the input should be ignored, 0 otherwise
  */
 bool ignoreInput(char* input_str) {
 	// Check for empty command string
@@ -46,55 +48,69 @@ bool ignoreInput(char* input_str) {
 
 
 /**
- * @brief Remove job from job_arr
+ * \brief Remove job from jobs table
  *
- * @param	job_idx	Job index in the job_arr
+ * \param	job_idx		Job index in the job_arr
+ * \param	shell_info	Shell info struct pointer
  */
-void removeJob(int job_idx) {
+void removeJob(int job_idx, shell_info_t *shell_info) {
 	// Clear job entries
-	job_arr[job_idx].jobno = 0;
-	job_arr[job_idx].gpid = 0;
-	strcpy(job_arr[job_idx].status, "\0");
+	shell_info->jobs_table[job_idx].jobno = 0;
+	shell_info->jobs_table[job_idx].gpid = 0;
+	strcpy(shell_info->jobs_table[job_idx].status, "\0");
 
-	// Decrease last job number if necessary
-	if (job_idx == last_job) {
-		// Find the next job
-		bool next_job_found = false;
-		while (!next_job_found) {
-			last_job--;
-			if (job_arr[last_job].jobno > 0) {
-				next_job_found = true;
-			}
+	// Iterate over the table backwards to lower table index
+	for (int i=(shell_info->jobs_table_idx)-1; i>=0; i--) {
+		// Reduce the index if thread at the end of the table is done
+		if (shell_info->jobs_table[shell_info->jobs_table_idx].jobno < 1) {
+			(shell_info->jobs_table_idx)--;
+		} else {	// Exit when we find the last running thread
+			break;
 		}
 	}
 }
 
 
 /**
- * @brief Print job information
+ * \brief Print job information
  *
- * @param	job_idx	Job array index
+ * TODO: Send output to client
+ *
+ * \param	job_idx		Job array index
+ * \param	shell_info	Shell info struct pointer
  */
-void printJob(int job_idx) {
+void printJob(int job_idx, shell_info_t *shell_info) {
+	char buf[MAX_CMD_LEN+1];
+
 	// Print the job number
-	printf("[%d]", job_arr[job_idx].jobno);
+	//fprintf(stderr, "[%d]", jobs_table[job_idx].jobno);
+	sprintf(buf, "[%d]", shell_info->jobs_table[job_idx].jobno);
+	send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 
 	// Print current job indicator
-	if (last_job == job_idx) {
-		printf("+");
+	if ((shell_info->jobs_table_idx)-1 == job_idx) {
+		//fprintf(stderr, "+");
+		sprintf(buf, "+");
+		send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 	} else {
-		printf("-");
+		//fprintf(stderr, "-");
+		sprintf(buf, "-");
+		send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 	}
 
 	// Print job status
-	printf(" %s", job_arr[job_idx].status);
+	//fprintf(stderr, " %s", shell_info->jobs_table[job_idx].status);
+	sprintf(buf, " %s\t", shell_info->jobs_table[job_idx].status);
+	send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 
 	// Print job command string
-	printf("\t");
-	for (int j=0; j<job_arr[job_idx].cmd_tok_len; j++) {
-		printf("%s ", job_arr[job_idx].cmd_tok[j]);
+	//fprintf(stderr, "\t");
+	for (int j=0; j<shell_info->jobs_table[job_idx].cmd_tok_len; j++) {
+		//fprintf(stderr, "%s ", shell_info->jobs_table[job_idx].cmd_tok[j]);
+		sprintf(buf, "%s ", shell_info->jobs_table[job_idx].cmd_tok[j]);
+		send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 	}
-	printf("\n");
+	//fprintf(stderr, "\n");
 }
 
 
@@ -119,39 +135,44 @@ void fgExec() {
 
 
 /**
- * @brief Display jobs table.
+ * \brief Display jobs table.
  *
- * TODO: Implement jobs
+ * \param	shell_info	Shell info struct pointer
  */
-void jobsExec() {
+void jobsExec(shell_info_t *shell_info) {
+	const char JOBS_MSG1[MAX_ERROR_LEN] = "No jobs in job table\n";
+
 	// Update the jobs table
-	maintainJobsTable();
+	maintainJobsTable(shell_info);
 
 	// Check we at least have one job in the list
-	if (last_job <= EMPTY_ARRAY) {
-		printf("No jobs in job table\n");
+	if (shell_info->jobs_table_idx <= 0) {
+		// TODO: Send this output to the client
+		//fprintf(stderr, "No jobs in job table\n");
+		send(shell_info->th_args->ps, JOBS_MSG1, (size_t) strlen(JOBS_MSG1), 0);
 		return;
 	}
 
 	// Iterate over all the jobs in the array
-	for (int i=0; i<=last_job; i++) {
+	for (int i=0; i<shell_info->jobs_table_idx; i++) {
 		// Only print active jobs
-		if (!strcmp(job_arr[i].status, JOB_STATUS_RUNNING) ||
-				!strcmp(job_arr[i].status, JOB_STATUS_STOPPED)) {
+		if (!strcmp(shell_info->jobs_table[i].status, JOB_STATUS_RUNNING) ||
+				!strcmp(shell_info->jobs_table[i].status, JOB_STATUS_STOPPED)) {
 			// Print the job info
-			printJob(i);
+			printJob(i, shell_info);
 		}
 	}
 }
 
 
 /**
- * @brief Check if input is shell command, and run it.
+ * \brief Check if input is shell command, and run it.
  *
- * @param	input	Raw input string
- * @return	True if shell command ran, false if it is not a shell command
+ * \param	input		Raw input string
+ * \param	shell_info	Shell info struct pointer
+ * \return	True if shell command ran, false if it is not a shell command
  */
-bool runShellCmd(char* input) {
+bool runShellCmd(char* input, shell_info_t *shell_info) {
 	if (!strcmp(input, CMD_BG)) {
 		bgExec();
 		return true;
@@ -159,7 +180,7 @@ bool runShellCmd(char* input) {
 		fgExec();
 		return true;
 	} else if (!strcmp(input, CMD_JOBS)) {
-		jobsExec();
+		jobsExec(shell_info);
 		return true;
 	}
 	return false;
@@ -167,18 +188,18 @@ bool runShellCmd(char* input) {
 
 
 /**
- * @brief Split a command string into string tokens.
+ * \brief Split a command string into string tokens.
  *
  * This function assumes the `cmd.cmd_str` is not an empty string.
  *
  * This function uses strtok() to split a command string into string tokens.
  * Tokens are considered to be contiguous characters separated by whitespace.
  *
- * @param	cmd	Command struct
+ * \param	cmd	Command struct
  *
- * @sa strtok(), Cmd
+ * \sa strtok(), Cmd
  */
-void tokenizeString(Job* cmd) {
+void tokenizeString(job_info_t* cmd) {
 	const char CMD_TOKEN_DELIM = ' ';	// From requirements
 	size_t len = 0;
 
@@ -200,7 +221,7 @@ void tokenizeString(Job* cmd) {
 
 
 /**
- * @brief Parse a command.
+ * \brief Parse a command.
  *
  * This function assumes the `cmd.cmd_str` is not an empty string.
  *
@@ -209,13 +230,12 @@ void tokenizeString(Job* cmd) {
  *
  * TODO: Might need check for multiple redirections of the same type to raise an error.
  *
- * @param	cmd_str		Raw command string
- * @param	job_arr	Jobs list of parsed commands
- * @param	last_job	Last job added to the job_arr
+ * \param	cmd_str		Raw command string
+ * \param	shell_info	Shell info struct pointer
  *
  * @sa	Cmd
  */
-void parseJob(char* cmd_str, Job job_arr[], int* last_job) {
+void parseJob(char* cmd_str, shell_info_t *shell_info) {
 	const char I_REDIR_OPT[2] = "<\0";
 	const char O_REDIR_OPT[2] = ">\0";
 	const char E_REDIR_OPT[3] = "2>\0";
@@ -230,129 +250,130 @@ void parseJob(char* cmd_str, Job job_arr[], int* last_job) {
 			" token of the command\0";
 
 	// Save and tokenize command string
-	strcpy(job_arr[*last_job].cmd_str, cmd_str);
-	tokenizeString(&job_arr[*last_job]);
+	strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_str,
+			cmd_str);
+	tokenizeString(&(shell_info->jobs_table[(shell_info->jobs_table_idx)-1]));
 
 	/*
 	 * Iterate over all tokens to look for arguments, redirection directives,
 	 * pipes and background directives
 	 */
 	int cmd_count = 0;	// Command array counter
-	for (uint32_t i=0; i<job_arr[*last_job].cmd_tok_len; i++) {
-		if (!strcmp(I_REDIR_OPT, job_arr[*last_job].cmd_tok[i])) {	// Check for input redir
+	for (uint32_t i=0; i<shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok_len; i++) {
+		if (!strcmp(I_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i])) {	// Check for input redir
 			// Check if redirection token has the correct syntax
 			if (i <= 0 || cmd_count <= 0) {	// Check it is not the first token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_1);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_1);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (i >= job_arr[*last_job].cmd_tok_len-1) {	// Check it is not the last token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_3);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (i >= shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok_len-1) {	// Check it is not the last token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_3);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (!strcmp(I_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(O_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(E_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(PIPE_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(BG_OPT, job_arr[*last_job].cmd_tok[i+1])) {	// Check there is an argument after this token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_2);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (!strcmp(I_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(O_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(E_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(PIPE_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(BG_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1])) {	// Check there is an argument after this token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_2);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
 			} else {	// Correct syntax
 				i++;	// Move ahead one iter to get the redir argument
-				if (!job_arr[*last_job].pipe) {
-					strcpy(job_arr[*last_job].in1, job_arr[*last_job].cmd_tok[i]);
+				if (!shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
+					strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].in1, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				} else {
-					strcpy(job_arr[*last_job].in2, job_arr[*last_job].cmd_tok[i]);
+					strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].in2, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				}
 			}
-		} else if (!strcmp(O_REDIR_OPT,job_arr[*last_job].cmd_tok[i])) {	// Output redir
+		} else if (!strcmp(O_REDIR_OPT,shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i])) {	// Output redir
 			// Check if redirection token has the correct syntax
 			if (i <= 0 || cmd_count <= 0) {	// Check it is not the first token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_1);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_1);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (i >= job_arr[*last_job].cmd_tok_len-1) {	// Check it is not the last token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_3);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (i >= shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok_len-1) {	// Check it is not the last token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_3);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (!strcmp(I_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(O_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(E_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(PIPE_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(BG_OPT, job_arr[*last_job].cmd_tok[i+1])) {	// Check there is an argument after this token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_2);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (!strcmp(I_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(O_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(E_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(PIPE_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(BG_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1])) {	// Check there is an argument after this token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_2);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
 			} else {	// Correct syntax
 				i++;	// Move ahead one iter to get the redir argument
-				if (!job_arr[*last_job].pipe) {
-					strcpy(job_arr[*last_job].out1, job_arr[*last_job].cmd_tok[i]);
+				if (!shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
+					strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].out1, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				} else {
-					strcpy(job_arr[*last_job].out2, job_arr[*last_job].cmd_tok[i]);
+					strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].out2, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				}
 			}
-		} else if (!strcmp(E_REDIR_OPT, job_arr[*last_job].cmd_tok[i])) {	// Error redir
+		} else if (!strcmp(E_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i])) {	// Error redir
 			// Check if redirection token has the correct syntax
 			if (i <= 0 || cmd_count <= 0) {	// Check it is not the first token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_1);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_1);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (i >= job_arr[*last_job].cmd_tok_len-1) {	// Check it is not the last token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_3);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (i >= shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok_len-1) {	// Check it is not the last token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_3);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (!strcmp(I_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(O_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(E_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(PIPE_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(BG_OPT, job_arr[*last_job].cmd_tok[i+1])) {	// Check there is an argument after this token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_2);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (!strcmp(I_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(O_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(E_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(PIPE_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(BG_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1])) {	// Check there is an argument after this token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_2);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
 			} else {	// Correct syntax
 				i++;	// Move ahead one iter to get the redir argument
-				if (!job_arr[*last_job].pipe) {
-					strcpy(job_arr[*last_job].err1, job_arr[*last_job].cmd_tok[i]);
+				if (!shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
+					strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err1, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				} else {
-					strcpy(job_arr[*last_job].err2, job_arr[*last_job].cmd_tok[i]);
+					strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err2, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				}
 			}
-		} else if (!strcmp(PIPE_OPT, job_arr[*last_job].cmd_tok[i])) {	// Pipe command
+		} else if (!strcmp(PIPE_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i])) {	// Pipe command
 			// Check if pipe token has the correct syntax
 			if (i <= 0 || cmd_count <= 0) {	// Check it is not the first token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_1);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_1);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (i >= job_arr[*last_job].cmd_tok_len-1) {	// Check it is not the last token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_3);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (i >= shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok_len-1) {	// Check it is not the last token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_3);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
-			} else if (!strcmp(I_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(O_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(E_REDIR_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(PIPE_OPT, job_arr[*last_job].cmd_tok[i+1]) ||
-					!strcmp(BG_OPT, job_arr[*last_job].cmd_tok[i+1])) {	// Check there is an argument after this token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_2);
-				strcat(job_arr[*last_job].err_msg, job_arr[*last_job].cmd_tok[i]);
+			} else if (!strcmp(I_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(O_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(E_REDIR_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(PIPE_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1]) ||
+					!strcmp(BG_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i+1])) {	// Check there is an argument after this token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_2);
+				strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i]);
 				return;
 			} else {	// Correct syntax
-				job_arr[*last_job].pipe = true;
+				shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe = true;
 				cmd_count = 0;	// Start argument count for cmd2
 			}
-		} else if (!strcmp(BG_OPT, job_arr[*last_job].cmd_tok[i])) {	// Background command
+		} else if (!strcmp(BG_OPT, shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i])) {	// Background command
 			// Check if background token has the correct syntax
-			if (i != job_arr[*last_job].cmd_tok_len-1) {	// Check if it is not the last token
-				strcpy(job_arr[*last_job].err_msg, SYNTAX_ERR_4);
+			if (i != shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok_len-1) {	// Check if it is not the last token
+				strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, SYNTAX_ERR_4);
 				return;
 			} else {
-				job_arr[*last_job].bg = true;
+				shell_info->jobs_table[(shell_info->jobs_table_idx)-1].bg = true;
 			}
 		} else {	// Command argument
-			if (!job_arr[*last_job].pipe) {
-				job_arr[*last_job].cmd1[cmd_count] = job_arr[*last_job].cmd_tok[i];
+			if (!shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
+				shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd1[cmd_count] = shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i];
 				cmd_count++;
 			} else {
-				job_arr[*last_job].cmd2[cmd_count] = job_arr[*last_job].cmd_tok[i];
+				shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd2[cmd_count] = shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd_tok[i];
 				cmd_count++;
 			}
 		}
@@ -361,12 +382,12 @@ void parseJob(char* cmd_str, Job job_arr[], int* last_job) {
 
 
 /**
- * @brief Redirect input, output and error of simple commands without pipes, or
+ * \brief Redirect input, output and error of simple commands without pipes, or
  * left child of a pipe.
  *
- * @param	cmd	Command to set the redirection
+ * \param	cmd	Command to set the redirection
  */
-void redirectSimple(Job* cmd) {
+void redirectSimple(job_info_t* cmd) {
 	const char REDIR_ERR_1[MAX_ERROR_LEN] = "open errno ";
 	const char REDIR_ERR_2[MAX_ERROR_LEN] = ": could not open file: ";
 	extern errno;
@@ -432,11 +453,11 @@ void redirectSimple(Job* cmd) {
 
 
 /**
- * @brief Redirect input, output and error of right child of a pipe.
+ * \brief Redirect input, output and error of right child of a pipe.
  *
- * @param	cmd	Command to set the redirection
+ * \param	cmd	Command to set the redirection
  */
-void redirectPipe(Job* cmd) {
+void redirectPipe(job_info_t* cmd) {
 	const char REDIR_ERR_1[MAX_ERROR_LEN] = "open errno ";
 	const char REDIR_ERR_2[MAX_ERROR_LEN] = ": could not open file: ";
 	extern errno;
@@ -503,16 +524,17 @@ void redirectPipe(Job* cmd) {
 
 
 /**
- * @brief Set up signal handling to relay signals to children processes.
+ * \brief Set up signal handling to relay signals to children processes.
  *
  * This function is based on the UT Austin EE 382V Systems Programming class
  * examples posted by Dr. Ramesh Yerraballi.
  *
  * TODO: Add support for job control.
  *
- * @param cmd	Parsed command
+ * \param	cmd			Parsed command
+ * \param	shell_info	Shell info struct pointer
  */
-void waitForChildren(Job* cmd) {
+void waitForChildren(job_info_t* cmd, shell_info_t *shell_info) {
 	const char SIG_ERR_1[MAX_ERROR_LEN] = "signal errno ";
 	const char SIG_ERR_2[MAX_ERROR_LEN] = ": waitpid error";
 	extern errno;
@@ -544,7 +566,7 @@ void waitForChildren(Job* cmd) {
 		 * 60101242/compiler-error-using-wcontinued-option-for-waitpid
 		 */
 		//if (waitpid(-1, &status, WUNTRACED|WCONTINUED) == SYSCALL_RETURN_ERR) {
-		if (waitpid(job_arr[last_job].gpid, &status, WUNTRACED) == SYSCALL_RETURN_ERR) {
+		if (waitpid(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].gpid, &status, WUNTRACED) == SYSCALL_RETURN_ERR) {
 			sprintf(errno_str, "%d", errno);
 			strcpy(cmd->err_msg, SIG_ERR_1);
 			strcat(cmd->err_msg, errno_str);
@@ -553,21 +575,27 @@ void waitForChildren(Job* cmd) {
 		}
 
 		if (WIFEXITED(status)) {
+			/*
 			if (args->cmd_args.verbose) {
 				printf("-yash: child process terminated normally\n");
 			}
+			*/
 			count++;
 		} else if (WIFSIGNALED(status)) {
+			/*
 			printf("\n");	// Ensure there is an space after "^C"
 			if (args->cmd_args.verbose) {
 				printf("-yash: child process terminated by a signal\n");
 			}
+			*/
 			count++;
 		} else if (WIFSTOPPED(status)) {
+			/*
 			printf("\n");	// Ensure there is an space after "^Z"
 			if (args->cmd_args.verbose) {
 				printf("-yash: child process stopped by a signal\n");
 			}
+			*/
 			//
 		} /*else if (WIFCONTINUED(status)) {
 			//
@@ -577,7 +605,7 @@ void waitForChildren(Job* cmd) {
 
 
 /**
- * @brief Execute commands.
+ * \brief Execute commands.
  *
  * This function allows for both simple and piped commands (1 pipe only).
  * Moreover, the command is checked for correctness, and ignored if it does not
@@ -588,10 +616,10 @@ void waitForChildren(Job* cmd) {
  *
  * TODO: Add support for job control.
  *
- * @param	job_arr	Jobs list of parsed commands
- * @param	last_job	Last job added to the job_arr
+ * \param	shell_info	Shell info struct pointer
  */
-void runJob(Job job_arr[], int* last_job) {
+void runJob(shell_info_t *shell_info) {
+	char buf[MAX_CMD_LEN+1];
 	const char PIPE_ERR_1[MAX_ERROR_LEN] = "pipe errno ";
 	const char PIPE_ERR_2[MAX_ERROR_LEN] = ": failed to make pipe";
 	extern errno;
@@ -601,14 +629,14 @@ void runJob(Job job_arr[], int* last_job) {
 	int pfd[2];
 	int stdout_fd;
 
-	if (job_arr[*last_job].pipe) {
+	if (shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
 		stdout_fd = dup(STDOUT_FILENO);	// Save stdout
 
 		if (pipe(pfd) == SYSCALL_RETURN_ERR) {
 			sprintf(errno_str, "%d", errno);
-			strcpy(job_arr[*last_job].err_msg, PIPE_ERR_1);
-			strcat(job_arr[*last_job].err_msg, errno_str);
-			strcat(job_arr[*last_job].err_msg, PIPE_ERR_2);
+			strcpy(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, PIPE_ERR_1);
+			strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, errno_str);
+			strcat(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, PIPE_ERR_2);
 			return;
 		}
 	}
@@ -620,38 +648,50 @@ void runJob(Job job_arr[], int* last_job) {
 		setpgid(0, 0);
 
 		// Set up signal handling sent to the children process group
-		if (args->cmd_args.verbose) {
+		if (shell_info->th_args->cmd_args.verbose) {
+			/*
 			printf("-yash: children process group: ignoring signal SIGTTOU, "
 					"but getting all the others\n");
+			*/
+			sprintf(buf, "-yash: children process group: ignoring signal "
+					"SIGTTOU, but getting all the others\n");
+			send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 		}
 		signal(SIGTTOU, SIG_IGN);
 		signal(SIGINT, SIG_DFL);
 		signal(SIGTSTP, SIG_DFL);
 		signal(SIGCHLD, SIG_DFL);
 
-		if (job_arr[*last_job].pipe) {
+		if (shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
 			close(pfd[0]);	// Close unused read end
 			dup2(pfd[1], STDOUT_FILENO);	// Make output go to pipe
 		}
 		// Do additional redirection if necessary
-		redirectSimple(&job_arr[*last_job]);
-		if (strcmp(job_arr[*last_job].err_msg, EMPTY_STR)) {
-			if (job_arr[*last_job].pipe) {
+		redirectSimple(&(shell_info->jobs_table[(shell_info->jobs_table_idx)-1]));
+		if (strcmp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, EMPTY_STR)) {
+			/*
+			if (shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
 				dup2(stdout_fd, STDOUT_FILENO);	// Allow to write to stdout
 			}
-			printf("-yash: %s\n", job_arr[*last_job].err_msg);
+			printf("-yash: %s\n", shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
+			*/
+			sprintf(buf, "-yash: %s\n",
+					shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
+			send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 			exit(EXIT_ERR_CMD);
 		}
 
 		// Execute command
-		if (execvp(job_arr[*last_job].cmd1[0], job_arr[*last_job].cmd1) == SYSCALL_RETURN_ERR
-				&& args->cmd_args.verbose) {
-			printf("-yash: execvp() errno: %d\n", errno);
+		if (execvp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd1[0], shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd1) == SYSCALL_RETURN_ERR
+				&& shell_info->th_args->cmd_args.verbose) {
+			//printf("-yash: execvp() errno: %d\n", errno);
+			sprintf(buf, "-yash: execvp() errno: %d\n", errno);
+			send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 		}
 		// Make sure we terminate child on execvp() error
 		exit(EXIT_ERR_CMD);
 	} else {	// Parent process
-		if (job_arr[*last_job].pipe) {
+		if (shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
 			c2_pid = fork();
 
 			if (c2_pid == 0) {	// Child 2 or right child process
@@ -659,10 +699,12 @@ void runJob(Job job_arr[], int* last_job) {
 				setpgid(0, c1_pid);
 
 				// Set up signal handling sent to the children process group
+				/*
 				if (args->cmd_args.verbose) {
 					printf("-yash: children process group: ignoring signal SIGTTOU, "
 							"but getting all the others\n");
 				}
+				*/
 				signal(SIGTTOU, SIG_IGN);
 				signal(SIGINT, SIG_DFL);
 				signal(SIGTSTP, SIG_DFL);
@@ -671,17 +713,21 @@ void runJob(Job job_arr[], int* last_job) {
 				dup2(pfd[0], STDIN_FILENO);	// Get input from pipe
 
 				// Do additional redirection if necessary
-				redirectPipe(&job_arr[*last_job]);
-				if (strcmp(job_arr[*last_job].err_msg, EMPTY_STR)) {
+				redirectPipe(&(shell_info->jobs_table[(shell_info->jobs_table_idx)-1]));
+				if (strcmp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, EMPTY_STR)) {
+					/*
 					dup2(stdout_fd, STDOUT_FILENO);	// Allow to write to stdout
-					printf("-yash: %s\n", job_arr[*last_job].err_msg);
+					printf("-yash: %s\n", shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
+					*/
 					exit(EXIT_ERR_CMD);
 				}
 
 				// Execute command
-				if (execvp(job_arr[*last_job].cmd2[0], job_arr[*last_job].cmd2) == SYSCALL_RETURN_ERR
+				if (execvp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd2[0], shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd2) == SYSCALL_RETURN_ERR) {
+					/*
 						&& args->cmd_args.verbose) {
 					printf("-yash: execvp() errno: %d\n", errno);
+					*/
 				}
 				// Make sure we terminate child on execvp() error
 				exit(EXIT_ERR_CMD);
@@ -694,43 +740,49 @@ void runJob(Job job_arr[], int* last_job) {
 
 		// Parent process
 		// Save job gpid
-		job_arr[*last_job].gpid = c1_pid;
-		if (!job_arr[*last_job].bg) {
+		shell_info->jobs_table[(shell_info->jobs_table_idx)-1].gpid = c1_pid;
+		if (!shell_info->jobs_table[(shell_info->jobs_table_idx)-1].bg) {
 			// Give terminal control to child
+			/*
 			if (args->cmd_args.verbose) {
 				printf("-yash: "
 						"giving terminal control to child process group\n");
 			}
+			*/
 			tcsetpgrp(0, c1_pid);
 
 			// Block while waiting for children
-			waitForChildren(&job_arr[*last_job]);
-			if (strcmp(job_arr[*last_job].err_msg, EMPTY_STR)) {
+			waitForChildren(&(shell_info->jobs_table[(shell_info->jobs_table_idx)-1]), shell_info);
+			if (strcmp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, EMPTY_STR)) {
 				return;
 			}
 
 			// Get back terminal control to parent
+			/*
 			if (args->cmd_args.verbose) {
 				printf("-yash: returning terminal control to parent process\n");
 			}
+			*/
 			tcsetpgrp(0, getpid());
-			removeJob(*last_job);	// Remove job from jobs table
+			removeJob((shell_info->jobs_table_idx)-1, shell_info);	// Remove job from jobs table
 		}
 	}
 }
 
 
 /**
- * @brief Handle new job.
+ * \brief Handle new job.
  *
  * This function parses the raw input of the new job, adds the job to the jobs
  * table, and it executes the new job.
  *
- * @param	input	Raw input of the new job
+ * \param	input		Raw input of the new job
+ * \param	shell_info	Shell info struct pointer
  */
-void handleNewJob(char* input) {
+void handleNewJob(char* input, shell_info_t *shell_info) {
+	char buf[MAX_ERROR_LEN+10];
 	// Initialize a new Job struct
-	Job job = {
+	job_info_t job = {
 		EMPTY_STR,		// cmd_str
 		{ EMPTY_STR },	// cmd_tok
 		0,				// cmd_tok_size
@@ -751,168 +803,163 @@ void handleNewJob(char* input) {
 	};
 
 	// Add command to the jobs array
-	if (last_job < MAX_CONCURRENT_JOBS) {
-		last_job++;
-		job_arr[last_job] = job;
-		job_arr[last_job].jobno = last_job + 1;
-		strcpy(job_arr[last_job].status, JOB_STATUS_RUNNING);
+	if ((shell_info->jobs_table_idx)-1 < MAX_CONCURRENT_JOBS) {
+		shell_info->jobs_table[shell_info->jobs_table_idx] = job;
+		shell_info->jobs_table[shell_info->jobs_table_idx].jobno =
+				(shell_info->jobs_table_idx)+1;
+		strcpy(shell_info->jobs_table[shell_info->jobs_table_idx].status,
+				JOB_STATUS_RUNNING);
+		(shell_info->jobs_table_idx)++;
 	} else {
+		// Send output to client
+		/*
 		printf("-yash: max number of concurrent jobs reached: %d",
-				last_job);
+				shell_info->jobs_table_idx);
+		*/
+		sprintf(buf, "-yash: max number of concurrent jobs reached: %d",
+				MAX_CONCURRENT_JOBS);
+		send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 		return;
 	}
 
 	// Parse job
-	if (args->cmd_args.verbose) {
-		printf("-yash: parsing input...\n");
+	if (shell_info->th_args->cmd_args.verbose) {
+		//printf("-yash: parsing input...\n");
+		sprintf(buf, "-yash: parsing input...\n");
+		send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 	}
-	parseJob(input, job_arr, &last_job);
-	if (strcmp(job_arr[last_job].err_msg, EMPTY_STR)) {
-		printf("-yash: %s\n", job_arr[last_job].err_msg);
+	parseJob(input, shell_info);
+	if (strcmp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg,
+			EMPTY_STR)) {
+		//printf("-yash: %s\n", jobs_table[last_job].err_msg);
+		sprintf(buf, "-yash: %s\n",
+				shell_info->jobs_table[shell_info->jobs_table_idx].err_msg);
+		send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 		return;
 	}
 
 	// Run job
-	if (args->cmd_args.verbose) {
-		printf("-yash: executing command...\n");
+	if (shell_info->th_args->cmd_args.verbose) {
+		//printf("-yash: executing command...\n");
+		sprintf(buf, "-yash: executing command...\n");
+		send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 	}
-	runJob(job_arr, &last_job);
-	if (last_job != EMPTY_ARRAY) {
-		if (strcmp(job_arr[last_job].err_msg, EMPTY_STR)) {
-			printf("-yash: %s\n", job_arr[last_job].err_msg);
+
+	runJob(shell_info);
+	if (shell_info->jobs_table_idx != EMPTY_ARRAY) {
+		if (strcmp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, EMPTY_STR)) {
+			//printf("-yash: %s\n", shell_info->jobs_table[shell_info->jobs_table_idx].err_msg);
+			sprintf(buf, "-yash: %s\n",
+					shell_info->jobs_table[shell_info->jobs_table_idx].err_msg);
+			send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 			return;
 		}
 	}
 }
 
+
 /**
- * @brief Check if any background jobs finished.
+ * \brief Check if any background jobs finished.
  *
  * Check if any previously running job in the jobs table has finished running.
  *
- * TODO: Implement
+ * \param	shell_info	Shell info struct pointer
  */
-void maintainJobsTable() {
-	// Check every job in the job_arr
-	for (int i=0; i<=last_job; i++) {
+void maintainJobsTable(shell_info_t *shell_info) {
+	// Check every job in the jobs_table
+	for (int i=0; i<shell_info->jobs_table_idx; i++) {
 		// Skip jobs that already finished
-		if (!strcmp(job_arr[i].status, JOB_STATUS_RUNNING) ||
-				!strcmp(job_arr[i].status, JOB_STATUS_STOPPED)) {
+		if (!strcmp(shell_info->jobs_table[i].status, JOB_STATUS_RUNNING) ||
+				!strcmp(shell_info->jobs_table[i].status, JOB_STATUS_STOPPED)) {
 			int status;
-			if (waitpid(job_arr[i].gpid, &status, WNOHANG|WUNTRACED|WCONTINUED) == SYSCALL_RETURN_ERR) {
-				printf("-yash: error checking child %d status: %d\n",
-						job_arr[i].gpid, errno);
+			if (waitpid(shell_info->jobs_table[i].gpid, &status, WNOHANG|WUNTRACED|WCONTINUED) == SYSCALL_RETURN_ERR) {
+				perror("Error checking child status");
 				// TODO: handle error
 			}
 			if (WIFEXITED(status)) {
-				if (args->cmd_args.verbose) {
-					printf("-yash: child process terminated normally\n");
-				}
-
 				// Change status to done and, remove child from array
-				strcpy(job_arr[i].status, JOB_STATUS_DONE);
-				printJob(i);
-				removeJob(i);
-
+				strcpy(shell_info->jobs_table[i].status, JOB_STATUS_DONE);
+				// TODO: Send output to client
+				printJob(i, shell_info);
+				removeJob(i, shell_info);
 			} else if (WIFSIGNALED(status)) {
-				if (args->cmd_args.verbose) {
-					printf("-yash: child process terminated by a signal\n");
-				}
-
 				// Change status to done, and remove child from array
-				strcpy(job_arr[i].status, JOB_STATUS_DONE);
-				printJob(i);
-				removeJob(i);
+				strcpy(shell_info->jobs_table[i].status, JOB_STATUS_DONE);
+				// TODO: Send output to client
+				printJob(i, shell_info);
+				removeJob(i, shell_info);
 			} else if (WIFSTOPPED(status)) {
-				if (args->cmd_args.verbose) {
-					printf("-yash: child process stopped by a signal\n");
-				}
-
 				// Change status to stopped
-				strcpy(job_arr[i].status, JOB_STATUS_STOPPED);
+				strcpy(shell_info->jobs_table[i].status, JOB_STATUS_STOPPED);
 			} else if (WIFCONTINUED(status)) {
-				if (args->cmd_args.verbose) {
-					printf("-yash: child process continued by a signal\n");
-				}
-
 				// Change status to running
-				strcpy(job_arr[i].status, JOB_STATUS_RUNNING);
+				strcpy(shell_info->jobs_table[i].status, JOB_STATUS_RUNNING);
 			}
 		}
 	}
 }
 
-/**
- * @brief Send a SIGKILL to all jobs in the jobs list
- */
-void killAllJobs() {
-	for (int i=0; i<last_job; i++) {
-			// Skip jobs that already finished
-			if (!strcmp(job_arr[i].status, JOB_STATUS_RUNNING) ||
-					!strcmp(job_arr[i].status, JOB_STATUS_STOPPED)) {
-				kill(job_arr[i].gpid, SIGKILL);
-			}
-	}
-}
-
 
 /**
- * @brief Point of entry.
+ * \brief Send a SIGKILL to all jobs in the jobs list
  *
- * @param argc	Number of command line arguments
- * @param argv	Array of command line arguments
- * @return	Errorcode
+ * \param	shell_info	Shell info struct pointer
  */
-void *run_shell(void *targs) {
-	// Set up command line arguments
-	args = (th_args_t *) targs;
-
-	// Old yash code
-	char* in_str;
-
-	/*
-	 * Use `readline()` to control when to exit from the shell. Typing
-	 * [Ctrl]+[D] on an empty prompt line will exit as stated in the
-	 * requirements. From `readline()` documentation:
-	 *
-	 * "If readline encounters an EOF while reading the line, and the line is
-	 * empty at that point, then (char *)NULL is returned. Otherwise, the line
-	 * is ended just as if a newline had been typed."
-	 */
-	while ((in_str = readline("# "))) {
-		// Check input to ignore and show the prompt again
-		if (args->cmd_args.verbose) {
-			printf("-yash: checking if input should be ignored...\n");
-		}
-
-		// Check if input should be ignored
-		if (ignoreInput(in_str)) {
-			if (args->cmd_args.verbose) {
-				printf("-yash: input ignored\n");
+void killAllJobs(shell_info_t *shell_info) {
+	for (int i=0; i<shell_info->jobs_table_idx; i++) {
+			// Skip jobs that already finished
+			if (!strcmp(shell_info->jobs_table[i].status, JOB_STATUS_RUNNING) ||
+					!strcmp(shell_info->jobs_table[i].status, JOB_STATUS_STOPPED)) {
+				kill(shell_info->jobs_table[i].gpid, SIGKILL);
 			}
-		} else if (runShellCmd(in_str)) {	// Check if input is a shell command
-			if (args->cmd_args.verbose) {
-				printf("-yash: ran shell command\n");
-			}
-		} else {	// Handle new job
-			if (args->cmd_args.verbose) {
-				printf("-yash: new job\n");
-			}
-			handleNewJob(in_str);
-		}
+	}
+}
 
-		// Check for finished jobs
-		maintainJobsTable();
+
+/**
+ * \brief Point of entry.
+ *
+ * \param	job_str		Job raw string
+ * \param	shell_info	Shell info struct pointer
+ * \return	Errorcode
+ */
+int startJob(char *job_str, shell_info_t *shell_info) {
+	char buf_time[BUFF_SIZE_TIMESTAMP];
+
+	// Check input to ignore and show the prompt again
+	if (shell_info->th_args->cmd_args.verbose) {
+		fprintf(stderr, "%s yashd[%s:%d]: INFO: Checking if input should be "
+				"ignored...\n", timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+				inet_ntoa(shell_info->th_args->from.sin_addr),
+				ntohs(shell_info->th_args->from.sin_port));
 	}
 
-	// Ensure a new-line on exit
-	printf("\n");
-	if (args->cmd_args.verbose) {
-		printf("-yash: exiting...\n");
+	// Check if input should be ignored
+	if (ignoreInput(job_str)) {
+		if (shell_info->th_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: Input ignored\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(shell_info->th_args->from.sin_addr),
+					ntohs(shell_info->th_args->from.sin_port));
+		}
+	} else if (runShellCmd(job_str, shell_info)) {	// Check if input is a shell command
+		if (shell_info->th_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: Ran shell command\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(shell_info->th_args->from.sin_addr),
+					ntohs(shell_info->th_args->from.sin_port));
+		}
+	} else {	// Handle new job
+		if (shell_info->th_args->cmd_args.verbose) {
+			fprintf(stderr, "%s yashd[%s:%d]: INFO: New job\n",
+					timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
+					inet_ntoa(shell_info->th_args->from.sin_addr),
+					ntohs(shell_info->th_args->from.sin_port));
+		}
+		handleNewJob(job_str, shell_info);
 	}
-	killAllJobs();
 
-	// TODO: Ensure all child processes are dead on exit
-
+	// Check for finished jobs
+	maintainJobsTable(shell_info);
 	return (EXIT_OK);
 }

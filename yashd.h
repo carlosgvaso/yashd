@@ -153,7 +153,7 @@ typedef struct _msg_args {
  * must be set to the error message string. Else, `err_msg` must be set to
  * `"\0"`.
  */
-typedef struct Jobs {
+typedef struct _job_info {
 	char cmd_str[MAX_CMD_LEN+1];		// Input command as a string
 	char* cmd_tok[MAX_TOKEN_NUM];		// Tokenized input command
 	uint32_t cmd_tok_len;				// Number of tokens in command
@@ -171,27 +171,36 @@ typedef struct Jobs {
 	uint8_t jobno;						// Job number
 	char status[MAX_STATUS_LEN];		// Status of the process group
 	char err_msg[MAX_ERROR_LEN];		// Error message
-} Job;
+} job_info_t;
+
+/**
+ * \brief Information necessary for the shell to run jobs
+ */
+typedef struct _shell_info {
+	th_args_t *th_args;							// Thread arguments pointer
+	job_info_t jobs_table[MAX_CONCURRENT_JOBS];	// Jobs table
+	int jobs_table_idx;							// Number of jobs in table
+} shell_info_t;
 
 
 // Functions
 bool ignoreInput(char* input_str);
-void removeJob(int job_idx);
-void printJob(int job_idx);
+void removeJob(int job_idx, shell_info_t *shell_info);
+void printJob(int job_idx, shell_info_t *shell_info);
 void bgExec();
 void fgExec();
-void jobsExec();
-bool runShellComd(char* input);
-void tokenizeString(Job* cmd_tok);
-void parseJob(char* cmd_str, Job jobs_arr[], int* last_job);
-void redirectSimple(Job* cmd);
-void redirectPipe(Job* cmd);
-void waitForChildren(Job* cmd);
-void runJob(Job jobs_arr[], int* last_job);
-void handleNewJob(char* input);
-void maintainJobsTable();
-void killAllJobs();
-int startJob(char *job_str);
+void jobsExec(shell_info_t *shell_info);
+bool runShellComd(char* input, shell_info_t *shell_info);
+void tokenizeString(job_info_t* cmd_tok);
+void parseJob(char* cmd_str, shell_info_t *shell_info);
+void redirectSimple(job_info_t* cmd);
+void redirectPipe(job_info_t* cmd);
+void waitForChildren(job_info_t* cmd, shell_info_t *shell_info);
+void runJob(shell_info_t *shell_info);
+void handleNewJob(char* input, shell_info_t *shell_info);
+void maintainJobsTable(shell_info_t *shell_info);
+void killAllJobs(shell_info_t *shell_info);
+int startJob(char *job_str, shell_info_t *shell_info);
 
 char *timeStr(char *buff, int size);
 bool isNumber(char number[]);
@@ -208,8 +217,10 @@ void removeThFromTableByTid(pthread_t tid);
 void stopAllThreads();
 void exitThreadSafely();
 msg_args_t parseMessage(char *msg);
-void handleCTLMessages(char arg, th_args_t *thread_args);
-void handleCMDMessages(char *args, th_args_t *thread_args);
+void handleCTLMessages(char arg, th_args_t *thread_args,
+		shell_info_t *shell_info);
+void handleCMDMessages(char *args, th_args_t *thread_args,
+		shell_info_t *shell_info);
 void *serverThread(void *args);
 int main(int argc, char** argv);
 

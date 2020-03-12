@@ -1,9 +1,10 @@
 /**
  * @file yashd.c
  *
- * @brief Yash shell daemon.
+ * @brief Yash shell daemon
  *
- * @author:	Jose Carlos Martinez Garcia-Vaso <carlosgvaso@gmail.com>
+ * @author:	Jose Carlos Martinez Garcia-Vaso <carlosgvaso@utexas.edu>
+ * @author: Utkarsh Vardan <uvardan@utexas.edu>
  */
 
 #include "yashd.h"
@@ -18,7 +19,7 @@ static char log_path[PATHMAX+1];
 static char pid_path[PATHMAX+1];
 
 static th_info_t th_table[MAX_CONCURRENT_CLIENTS];	//! Thread table
-static int th_table_idx = 0;						//! Number of threads in table
+static int th_table_idx = 0;						//! New thread index in table
 static pthread_mutex_t th_table_lock;				//! Thread table lock
 
 
@@ -92,7 +93,7 @@ cmd_args_t parseArgs(int argc, char** argv) {
 		const char V_FLAG_SHORT[3] = "-v\0";
 		const char V_FLAG_LONG[10] = "--verbose\0";
 		const char V_INFO[MAX_ERROR_LEN] = "-yashd: verbose output enabled\n";
-		cmd_args_t args = {false, DAEMON_PORT};
+		cmd_args_t args = {false, DEFAULT_TCP_PORT};
 
 	// Loop over the arguments, skipping the command token
 	for (int i=1; i<argc; i++) {
@@ -442,7 +443,7 @@ void removeThFromTableByIdx(int idx) {
 	th_table[idx].socket = 0;
 	th_table[idx].pid = 0;
 
-	// Iterate over the table backwards to remove done threads
+	// Iterate over the table backwards to lower the table index
 	for (int i=th_table_idx-1; i>=0; i--) {
 		// Reduce the index if thread at the end of the table is done
 		if (!th_table[i].run) {
@@ -581,12 +582,19 @@ msg_args_t parseMessage(char *msg) {
 
 
 /**
- * @brief Handle CTL messages
+ * \brief Handle CTL messages
  *
- * @param	arg			CTL message argument
- * @param	thread_args	Thread arguments
+ * Message arguments supported:
+ * 	- c: SIGINT
+ * 	- z: SIGTSTP
+ * 	- d: EOF (disconnect client)
+ *
+ * \param	arg				CTL message argument
+ * \param	thread_args		Thread arguments struct pointer
+ * \param	shell_info		Shell info struct pointer
  */
-void handleCTLMessages(char arg, th_args_t *thread_args) {
+void handleCTLMessages(char arg, th_args_t *thread_args,
+		shell_info_t *shell_info) {
 	char buf_time[BUFF_SIZE_TIMESTAMP];
 
 	switch(arg) {
@@ -636,12 +644,14 @@ void handleCTLMessages(char arg, th_args_t *thread_args) {
 
 
 /**
- * @brief Handle CMD messages
+ * \brief Handle CMD messages
  *
- * @param	args		CMD message arguments
- * @param	thread_args	Thread arguments
+ * \param	args			CMD message arguments pointer
+ * \param	thread_args		Thread arguments struct pointer
+ * \param	shell_info		Shell information struct pointer
  */
-void handleCMDMessages(char *args, th_args_t *thread_args) {
+void handleCMDMessages(char *args, th_args_t *thread_args,
+		shell_info_t *shell_info) {
 	char buf_time[BUFF_SIZE_TIMESTAMP];
 
 	// TODO: Implement running the job received
@@ -651,6 +661,8 @@ void handleCMDMessages(char *args, th_args_t *thread_args) {
 				inet_ntoa(thread_args->from.sin_addr),
 				ntohs(thread_args->from.sin_port), args);
 	}
+
+	startJob(args, shell_info);
 }
 
 
@@ -671,6 +683,11 @@ void *serverThread(void *thread_args) {
 	int rc;
 	struct hostent *hp, *gethostbyname();
 	char *prompt = CMD_PROMPT;
+	shell_info_t sh_info;
+
+	sh_info.th_args = th_args;
+	sh_info.jobs_table_idx = 0;
+
 
 	/* Now we do this in main() after creating the thread
 	// Get lock to add thread id to shared thread table
@@ -758,7 +775,7 @@ void *serverThread(void *thread_args) {
 				}
 
 				// Handle CTL messages
-				handleCTLMessages(msg.args[0], th_args);
+				handleCTLMessages(msg.args[0], th_args, &sh_info);
 				// TODO: Remove after implementing handleCTLMessages()
 				// *** Start of section to remove ******************************
 				// For now, we are just sending the message back
@@ -768,7 +785,7 @@ void *serverThread(void *thread_args) {
 				// *** End of section to remove ********************************
 			} else if (!strcmp(msg.type, MSG_TYPE_CMD)) {
 				// Handle CMD messages
-				handleCMDMessages(msg.args, th_args);
+				handleCMDMessages(msg.args, th_args, &sh_info);
 				// TODO: Remove after implementing handleCMDMessages()
 				// *** Start of section to remove ******************************
 				// For now we are just sending the message back
@@ -819,17 +836,22 @@ void *serverThread(void *thread_args) {
 				timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
 				inet_ntoa(from.sin_addr), ntohs(from.sin_port));
 	}
+
+	/* TODO: Ensure all child processes are dead on exit
+	 * killAllJobs();
+	 */
+
 	exitThreadSafely();
 	pthread_exit(NULL);
 }
 
 
 /**
- * @brief Point of entry.
+ * @brief Point of entry
  *
- * @param argc	Number of command line arguments
- * @param argv	Array of command line arguments
- * @return	Errorcode
+ * @param	argc	Number of command line arguments
+ * @param	argv	Array of command line arguments
+ * @return	Error code
  */
 int main(int argc, char **argv) {
 	bool run = true;
