@@ -11,8 +11,6 @@
 
 
 // Globals
-//static th_args_t args;
-
 extern int errno;
 
 
@@ -627,10 +625,12 @@ void runJob(shell_info_t *shell_info) {
 
 	pid_t c1_pid, c2_pid;
 	int pfd[2];
-	int stdout_fd;
+	//int stdout_fd;	// Not needed since stdin/out will be the socket
+
+
 
 	if (shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
-		stdout_fd = dup(STDOUT_FILENO);	// Save stdout
+		//stdout_fd = dup(STDOUT_FILENO);	// Save stdout
 
 		if (pipe(pfd) == SYSCALL_RETURN_ERR) {
 			sprintf(errno_str, "%d", errno);
@@ -662,10 +662,18 @@ void runJob(shell_info_t *shell_info) {
 		signal(SIGTSTP, SIG_DFL);
 		signal(SIGCHLD, SIG_DFL);
 
+		// Setup the socket as stdin/out, and make necessary changes for pipes
 		if (shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
 			close(pfd[0]);	// Close unused read end
 			dup2(pfd[1], STDOUT_FILENO);	// Make output go to pipe
+			dup2(shell_info->th_args->ps, STDERR_FILENO);	// Send the stderr to socket
+			close(shell_info->th_args->ps);
+		} else {
+			dup2(shell_info->th_args->ps, STDOUT_FILENO);	// Send the output to socket
+			dup2(shell_info->th_args->ps, STDERR_FILENO);	// Send the stderr to socket
+			close(shell_info->th_args->ps);
 		}
+
 		// Do additional redirection if necessary
 		redirectSimple(&(shell_info->jobs_table[(shell_info->jobs_table_idx)-1]));
 		if (strcmp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, EMPTY_STR)) {
@@ -673,10 +681,10 @@ void runJob(shell_info_t *shell_info) {
 			if (shell_info->jobs_table[(shell_info->jobs_table_idx)-1].pipe) {
 				dup2(stdout_fd, STDOUT_FILENO);	// Allow to write to stdout
 			}
-			printf("-yash: %s\n", shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
 			*/
-			sprintf(buf, "-yash: %s\n",
-					shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
+			printf("-yash: %s\n", shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
+			//sprintf(buf, "-yash: %s\n",
+			//		shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
 			send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 			exit(EXIT_ERR_CMD);
 		}
@@ -684,9 +692,9 @@ void runJob(shell_info_t *shell_info) {
 		// Execute command
 		if (execvp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd1[0], shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd1) == SYSCALL_RETURN_ERR
 				&& shell_info->th_args->cmd_args.verbose) {
-			//printf("-yash: execvp() errno: %d\n", errno);
-			sprintf(buf, "-yash: execvp() errno: %d\n", errno);
-			send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
+			printf("-yash: execvp() errno: %d\n", errno);
+			//sprintf(buf, "-yash: execvp() errno: %d\n", errno);
+			//send(shell_info->th_args->ps, buf, (size_t) strlen(buf), 0);
 		}
 		// Make sure we terminate child on execvp() error
 		exit(EXIT_ERR_CMD);
@@ -708,26 +716,26 @@ void runJob(shell_info_t *shell_info) {
 				signal(SIGTTOU, SIG_IGN);
 				signal(SIGINT, SIG_DFL);
 				signal(SIGTSTP, SIG_DFL);
+				signal(SIGCHLD, SIG_DFL);
 
 				close(pfd[1]);	// Close unused write end
 				dup2(pfd[0], STDIN_FILENO);	// Get input from pipe
+				dup2(shell_info->th_args->ps, STDOUT_FILENO);	// Send the output to socket
+				dup2(shell_info->th_args->ps, STDERR_FILENO);	// Send the stderr to socket
+				close(shell_info->th_args->ps);
 
 				// Do additional redirection if necessary
 				redirectPipe(&(shell_info->jobs_table[(shell_info->jobs_table_idx)-1]));
 				if (strcmp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg, EMPTY_STR)) {
-					/*
-					dup2(stdout_fd, STDOUT_FILENO);	// Allow to write to stdout
+					//dup2(stdout_fd, STDOUT_FILENO);	// Allow to write to stdout
 					printf("-yash: %s\n", shell_info->jobs_table[(shell_info->jobs_table_idx)-1].err_msg);
-					*/
 					exit(EXIT_ERR_CMD);
 				}
 
 				// Execute command
-				if (execvp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd2[0], shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd2) == SYSCALL_RETURN_ERR) {
-					/*
-						&& args->cmd_args.verbose) {
+				if (execvp(shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd2[0], shell_info->jobs_table[(shell_info->jobs_table_idx)-1].cmd2) == SYSCALL_RETURN_ERR
+						&& shell_info->th_args->cmd_args.verbose) {
 					printf("-yash: execvp() errno: %d\n", errno);
-					*/
 				}
 				// Make sure we terminate child on execvp() error
 				exit(EXIT_ERR_CMD);
@@ -735,7 +743,7 @@ void runJob(shell_info_t *shell_info) {
 			// Parent process. Close pipes so EOF can work
 			close(pfd[0]);
 			close(pfd[1]);
-			close(stdout_fd);
+			//close(stdout_fd);
 		}
 
 		// Parent process

@@ -674,7 +674,8 @@ void handleCMDMessages(char *args, th_args_t *thread_args,
  * @param	thread_args	Arguments passed to the thread as a th_args_t struct
  */
 void *serverThread(void *thread_args) {
-	th_args_t *th_args = (th_args_t*) thread_args;
+	th_args_t th_args_s = *(th_args_t*) thread_args;
+	th_args_t *th_args = &th_args_s;
 	int ps = th_args->ps;
 	struct sockaddr_in from = th_args->from;
 	bool run_th = true;
@@ -776,24 +777,9 @@ void *serverThread(void *thread_args) {
 
 				// Handle CTL messages
 				handleCTLMessages(msg.args[0], th_args, &sh_info);
-				// TODO: Remove after implementing handleCTLMessages()
-				// *** Start of section to remove ******************************
-				// For now, we are just sending the message back
-				if (send(ps, buf_msg, rc, 0) < 0) {
-					perror("ERROR: Sending stream message");
-				}
-				// *** End of section to remove ********************************
 			} else if (!strcmp(msg.type, MSG_TYPE_CMD)) {
 				// Handle CMD messages
 				handleCMDMessages(msg.args, th_args, &sh_info);
-				// TODO: Remove after implementing handleCMDMessages()
-				// *** Start of section to remove ******************************
-				// For now we are just sending the message back
-				if (send(ps, buf_msg, rc, 0) < 0) {
-					perror("ERROR: Sending stream message");
-				}
-				// *** End of section to remove ********************************
-
 				fprintf(stderr, "%s yashd[%s:%d]: %s\n",
 						timeStr(buf_time, BUFF_SIZE_TIMESTAMP),
 						inet_ntoa(from.sin_addr), ntohs(from.sin_port),

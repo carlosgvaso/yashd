@@ -55,7 +55,7 @@ bool isNumber(char number[]) {
  */
 cmd_args_t parseArgs(int argc, char** argv) {
 	const char USAGE[MAX_ERROR_LEN] = "\nUsage:\n"
-			"./yashd [options] <host>\n"
+			"./yash [options] <host>\n"
 			"\n"
 			"Required arguments:\n"
 			"    host                    Yashd server host address\n"
@@ -63,14 +63,14 @@ cmd_args_t parseArgs(int argc, char** argv) {
 			"Options:\n"
 			"    -h, --help              Print help and exit\n"
 			"    -p PORT, --port PORT    Server port [1024-65535]\n";
-	const char ARG_ERROR[MAX_ERROR_LEN] = "-yashd: wrong number of arguments\n";
+	const char ARG_ERROR[MAX_ERROR_LEN] = "-yash: wrong number of arguments\n";
 	const char H_FLAG_SHORT[3] = "-h\0";
 	const char H_FLAG_LONG[10] = "--help\0";
 	const char P_FLAG_SHORT[3] = "-p\0";
 	const char P_FLAG_LONG[10] = "--port\0";
-	const char P_INFO[MAX_ERROR_LEN] = "-yashd: using port: %d\n";
-	const char P_ERROR1[MAX_ERROR_LEN] = "-yashd: missing port number\n";
-	const char P_ERROR2[MAX_ERROR_LEN] = "-yashd: port must be an integer "
+	const char P_INFO[MAX_ERROR_LEN] = "-yash: using port: %d\n";
+	const char P_ERROR1[MAX_ERROR_LEN] = "-yash: missing port number\n";
+	const char P_ERROR2[MAX_ERROR_LEN] = "-yash: port must be an integer "
 			"between %d and %d\n";
 	cmd_args_t args = {EMPTY_STR, DEFAULT_TCP_PORT};
 
