@@ -3,9 +3,11 @@ yashd
 
 Yet Another SHell daemon (yashd) is a daemon service that provides a basic Linux
 shell built on C with minimum library dependencies and a client to talk to the
-service.
+service. The daemon will move its working directory to a safe directory
+(`/tmp/`), and all commands sent by the clients will be executed with that
+directory as the working directory.
 
-Authors:
+**Authors:**
 
  * Jose Carlos Martinez Garcia-Vaso <carlosgvaso@utexas.edu>
  * Utkarsh Vardan <uvardan@utexas.edu>

@@ -20,6 +20,7 @@
 #include <arpa/inet.h>
 #include <sys/un.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <netdb.h>
 #include <signal.h>
 #include <errno.h>
@@ -66,6 +67,8 @@
 #define DAEMON_PID_PATH "/tmp/yashd.pid"	//! Daemon PID file path
 #define DAEMON_UMASK 0						//! Daemon umask
 
+#define MSG_START_DELIMITER 0x02	//! Start-message delimiter
+#define MSG_END_DELIMITER 0x03		//! End-message delimiter
 #define MSG_TYPE_CTL "CTL\0"	//! Control message token
 #define MSG_TYPE_CMD "CMD\0"	//! Command message token
 #define MSG_CTL_SIGINT 'c'		//! Control message argument for SIGINT (ctrl+c)
@@ -85,7 +88,7 @@
 
 
 /**
- * @brief Struct to organize all the command line arguments.
+ * \brief Struct to organize all the command line arguments.
  *
  * Arguments:
  *   - verbose: enable debugging log output
@@ -98,39 +101,30 @@ typedef struct _cmd_args_t {
 
 
 /**
- * @brief Struct to organize all the necessary arguments passed to a thread
+ * \brief Struct with all the arguments passed to a servant thread
  */
-typedef struct _th_args_t {
+typedef struct _servant_th_args_t {
 	cmd_args_t cmd_args;		// Command line arguments
 	int idx;					// Thread table index
 	int ps;						// Socket fd
 	struct sockaddr_in from;	// Client connection information
-} th_args_t;
+} servant_th_args_t;
 
 
 /**
- * @brief Struct to organize all the info for an entry in the threads table
+ * \brief Struct with all the info for an entry in the servant threads table
  */
-typedef struct _th_info {
+typedef struct _servant_th_info {
 	pthread_t tid;
 	bool run;
 	int socket;
-	int pid;
-	int pthread_pipe_fd[2];
-} th_info_t;
+	//int pid;
+	//int pthread_pipe_fd[2];
+} servant_th_info_t;
 
 
 /**
- * @brief Struct to organize the received messages from the client
- */
-typedef struct _msg_args {
-	char type[4];				// CMD/CTL
-	char args[MAX_CMD_LEN+1];	// Message arguments
-} msg_args_t;
-
-
-/**
- * @brief Struct to organize all information of a shell command.
+ * \brief Struct to organize all information of a shell command.
  *
  * The raw input string should be saved to `cmd_str`. The tokenized command
  * should be saved to `cmd_tok`, and the size of that array to `cmd_tok_size`.
@@ -173,14 +167,64 @@ typedef struct _job_info {
 	char err_msg[MAX_ERROR_LEN];		// Error message
 } job_info_t;
 
+
+/**
+ * \brief Struct with all the info for an entry in the job threads table
+ */
+typedef struct _job_th_info {
+	pthread_t tid;
+	bool run;
+	int jobno;
+	//bool fg;
+	//int fg_stdin_pipe[2];
+} job_th_info_t;
+
+
 /**
  * \brief Information necessary for the shell to run jobs
  */
 typedef struct _shell_info {
-	th_args_t *th_args;							// Thread arguments pointer
-	job_info_t jobs_table[MAX_CONCURRENT_JOBS];	// Jobs table
-	int jobs_table_idx;							// Number of jobs in table
+	servant_th_args_t th_args;					// Thread arguments pointer
+	int stdin_pipe_fd[2];						// FDs of pipe to the stdin of the foreground process
+	job_info_t job_table[MAX_CONCURRENT_JOBS];	// Jobs table
+	int job_table_idx;							// Number of jobs in table
+	job_th_info_t job_th_table[MAX_CONCURRENT_JOBS];	// Job thread table
+	int job_th_table_idx;							// Number of job threads in table
 } shell_info_t;
+
+
+/**
+ * \brief Struct with all the arguments passed to a job thread
+ */
+typedef struct _job_thread_args {
+	char args[MAX_CMD_LEN+5];
+	int job_th_idx;
+	shell_info_t *shell_info;
+} job_thread_args_t;
+
+
+/**
+ * \brief Struct to serve as buffer for the received/sent messages
+ */
+typedef struct _msg{
+	char msg[MAX_CMD_LEN+5];
+	int msg_size;
+	char leftovers[MAX_CMD_LEN+5];
+} msg_t;
+
+
+/**
+ * @brief Struct to organize the received messages from the client
+ */
+typedef struct _msg_args {
+	char type[4];				// CMD/CTL
+	char args[MAX_CMD_LEN+1];	// Message arguments
+} msg_args_t;
+
+
+// Globals
+cmd_args_t args;
+pthread_mutex_t shell_info_lock;						//! Shell info lock
 
 
 // Functions
@@ -210,18 +254,24 @@ void sigChld(int n);
 void daemonInit(const char *const path, uint mask);
 void reusePort(int sock);
 int createSocket(int port);
-void printThTable();
-int searchThByTid(pthread_t tid);
-void removeThFromTableByIdx(int idx);
-void removeThFromTableByTid(pthread_t tid);
-void stopAllThreads();
-void exitThreadSafely();
+int recvMsg(int socket, msg_t *buffer);
+int sendMsg(int socket, msg_t *buffer);
+void printServantThTable();
+int searchServantThByTid(pthread_t tid);
+void removeServantThFromTableByIdx(int idx);
+void removeServantThFromTableByTid(pthread_t tid);
+void stopAllServantThreads();
+void exitServantThreadSafely();
+void printJobThTable(shell_info_t *shell_info);
+int searchJobThByTid(pthread_t tid, shell_info_t *shell_info);
+void removeJobThFromTableByIdx(int idx, shell_info_t *shell_info);
+void removeJobThFromTableByTid(pthread_t tid, shell_info_t *shell_info);
+void stopAllJobThreads(shell_info_t *shell_info);
+void exitJobThreadSafely(shell_info_t *shell_info);
 msg_args_t parseMessage(char *msg);
-void handleCTLMessages(char arg, th_args_t *thread_args,
-		shell_info_t *shell_info);
-void handleCMDMessages(char *args, th_args_t *thread_args,
-		shell_info_t *shell_info);
-void *serverThread(void *args);
+void handleCTLMessages(char arg, shell_info_t *shell_info);
+void handleCMDMessages(char *args, shell_info_t *shell_info);
+void *servantThread(void *args);
 int main(int argc, char** argv);
 
 #endif
